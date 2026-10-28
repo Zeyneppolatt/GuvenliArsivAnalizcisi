@@ -1,0 +1,14 @@
+
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Yerel test dosyaları
+test.zip
+bozuk.zip
+ornek.txt
+
+# Ortam değişkenleri ve gizli bilgiler
+.env
+ornekçtxt
