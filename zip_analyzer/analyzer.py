@@ -1,22 +1,30 @@
 
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 from zip_analyzer.rules import evaluate_archive
 
-
 ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".gz")
-
-# ZIP dosyasının kendisi için üst boyut sınırı: 1 GiB
 MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
-
-# Merkezi dizin okunduktan sonra uygulanacak sınır
 MAX_METADATA_ENTRIES = 10_000
+
+
+def is_suspicious_path(filename):
+    """Şüpheli arşiv içi yolları belirler."""
+    normalized = filename.replace("\\", "/")
+    parts = normalized.split("/")
+
+    return (
+        normalized.startswith("/")
+        or any(part == ".." for part in parts)
+        or (len(normalized) >= 2 and normalized[1] == ":")
+        or "\x00" in normalized
+    )
 
 
 def analyze_zip(file_path):
     """ZIP dosyasını çıkartmadan metadata üzerinden analiz eder."""
-
     path = Path(file_path)
 
     report = {
@@ -27,7 +35,9 @@ def analyze_zip(file_path):
         "compressed_size": 0,
         "uncompressed_size": 0,
         "compression_ratio": 0,
+        "file_types": {},
         "nested_archives": [],
+        "suspicious_paths": [],
         "warnings": [],
         "error": None,
     }
@@ -37,10 +47,7 @@ def analyze_zip(file_path):
         return report
 
     try:
-        # ZIP açılmadan önce arşivin kendi boyutunu kontrol et.
-        archive_size = path.stat().st_size
-
-        if archive_size > MAX_ARCHIVE_SIZE:
+        if path.stat().st_size > MAX_ARCHIVE_SIZE:
             report["risk_level"] = "HIGH"
             report["warnings"].append(
                 "Arşiv dosyasının boyutu izin verilen sınırı aşıyor."
@@ -51,8 +58,6 @@ def analyze_zip(file_path):
         with zipfile.ZipFile(path, "r") as archive:
             entries = archive.infolist()
 
-            # Metadata belleğe alındıktan sonra sayıyı kontrol eder.
-            # Bu kontrol tek başına bellek tüketimini engellemez.
             if len(entries) > MAX_METADATA_ENTRIES:
                 report["risk_level"] = "HIGH"
                 report["warnings"].append(
@@ -61,9 +66,12 @@ def analyze_zip(file_path):
                 report["error"] = "Arşivdeki kayıt sayısı sınırı aşıldı."
                 return report
 
-            files = [
-                entry for entry in entries
-                if not entry.is_dir()
+            files = [entry for entry in entries if not entry.is_dir()]
+
+            suspicious_paths = [
+                entry.filename
+                for entry in files
+                if is_suspicious_path(entry.filename)
             ]
 
             total_compressed = sum(
@@ -80,10 +88,13 @@ def analyze_zip(file_path):
             nested_archives = [
                 entry.filename
                 for entry in files
-                if entry.filename.lower().endswith(
-                    ARCHIVE_EXTENSIONS
-                )
+                if entry.filename.lower().endswith(ARCHIVE_EXTENSIONS)
             ]
+
+            file_types = Counter(
+                Path(entry.filename).suffix.lower() or "[uzantısız]"
+                for entry in files
+            )
 
             risk = evaluate_archive(
                 total_compressed_size=total_compressed,
@@ -93,15 +104,29 @@ def analyze_zip(file_path):
                 nested_archive_count=len(nested_archives),
             )
 
+            warnings = list(risk["warnings"])
+
+            if suspicious_paths:
+                warnings.append(
+                    "Şüpheli dosya yolu bulundu: "
+                    + ", ".join(suspicious_paths[:5])
+                )
+
             report.update({
                 "status": "OK",
-                "risk_level": risk["risk_level"],
+                "risk_level": (
+                    "HIGH"
+                    if suspicious_paths
+                    else risk["risk_level"]
+                ),
                 "total_files": len(files),
                 "compressed_size": total_compressed,
                 "uncompressed_size": total_uncompressed,
                 "compression_ratio": risk["compression_ratio"],
+                "file_types": dict(sorted(file_types.items())),
                 "nested_archives": nested_archives,
-                "warnings": risk["warnings"],
+                "suspicious_paths": suspicious_paths,
+                "warnings": warnings,
             })
 
     except (
@@ -109,6 +134,8 @@ def analyze_zip(file_path):
         zipfile.LargeZipFile,
         OSError,
         ValueError,
+        RuntimeError,
+        EOFError,
     ) as error:
         report["error"] = f"Arşiv okunamadı: {error}"
 
