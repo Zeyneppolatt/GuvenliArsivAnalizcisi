@@ -1,14 +1,27 @@
 
+# Python sanal ortamı
 .venv/
-__pycache__/
-.pytest_cache/
-*.py[cod]
+venv/
 
-# Yerel test dosyaları
-test.zip
-bozuk.zip
-ornek.txt
+# Python önbellekleri
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # Ortam değişkenleri ve gizli bilgiler
 .env
+.env.*
+
+# Yerel test ve analiz dosyaları
+test.zip
+bozuk.zip
+ornek.zip
+ornek.txt
 ornekçtxt
+rapor.json
+
+# IDE ve işletim sistemi dosyaları
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

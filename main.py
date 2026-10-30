@@ -25,6 +25,24 @@ def print_summary(report):
 
     print(f"\nİç içe arşiv sayısı: {len(report['nested_archives'])}")
     print(f"Şüpheli yol sayısı: {len(report['suspicious_paths'])}")
+    print(f"Şifreli dosya sayısı: {len(report['encrypted_files'])}")
+    print(f"Sembolik bağlantı sayısı: {len(report['symlink_files'])}")
+    print(f"Şüpheli uzantılı dosya sayısı: {len(report['suspicious_files'])}")
+    print(
+        "Çift uzantılı dosya sayısı: "
+        f"{len(report['double_extension_files'])}"
+    )
+
+    if report["nested_archive_reports"]:
+        print("\nİç ZIP analizleri:")
+        for nested in report["nested_archive_reports"]:
+            print(
+                f"  {nested['file_name']}: "
+                f"{nested['status']} / {nested['risk_level']}"
+            )
+
+            if nested.get("error"):
+                print(f"    Hata: {nested['error']}")
 
     print("\nUyarılar:")
     if report["warnings"]:
@@ -61,7 +79,12 @@ def analyze_path(target):
         "compression_ratio": 0,
         "file_types": {},
         "nested_archives": [],
+        "nested_archive_reports": [],
         "suspicious_paths": [],
+        "encrypted_files": [],
+        "symlink_files": [],
+        "suspicious_files": [],
+        "double_extension_files": [],
         "warnings": [],
         "error": "Dosya veya klasör bulunamadı.",
     }]
@@ -71,19 +94,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="ZIP arşivlerini çıkartmadan analiz eder."
     )
+
     parser.add_argument(
         "path",
         help="Analiz edilecek ZIP dosyası veya ZIP dosyalarını içeren klasör",
     )
+
     parser.add_argument(
         "--output", "-o",
         help="JSON raporunun kaydedileceği dosya",
     )
+
     parser.add_argument(
         "--pretty",
         action="store_true",
         help="JSON çıktısını okunabilir biçimde göster",
     )
+
     parser.add_argument(
         "--summary",
         action="store_true",
@@ -98,21 +125,25 @@ def main():
         for index, report in enumerate(reports):
             if index:
                 print("\n" + "-" * 40 + "\n")
+
             print_summary(report)
 
         counts = {}
+
         for report in reports:
             level = report["risk_level"]
             counts[level] = counts.get(level, 0) + 1
 
         print("\n===== TOPLU ANALİZ ÖZETİ =====")
         print(f"Toplam arşiv: {len(reports)}")
+
         for level in ("HIGH", "MEDIUM", "LOW", "UNKNOWN"):
             if counts.get(level):
                 print(f"{level}: {counts[level]}")
 
     else:
         output_data = reports if is_directory else reports[0]
+
         json_output = json.dumps(
             output_data,
             ensure_ascii=False,

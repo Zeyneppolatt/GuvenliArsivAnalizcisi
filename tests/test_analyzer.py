@@ -243,3 +243,70 @@ def test_analyze_path_missing_target(tmp_path):
     assert len(reports) == 1
     assert reports[0]["status"] == "ERROR"
     assert reports[0]["error"] == "Dosya veya klasör bulunamadı."
+
+def test_suspicious_extension_detection():
+    from zip_analyzer.rules import evaluate_suspicious_files
+
+    result = evaluate_suspicious_files([
+        "program.exe",
+        "belge.txt",
+    ])
+
+    assert result["suspicious_files"] == ["program.exe"]
+    assert result["risk_level"] == "MEDIUM"
+
+
+def test_double_extension_detection():
+    from zip_analyzer.rules import evaluate_suspicious_files
+
+    result = evaluate_suspicious_files([
+        "fatura.pdf.exe",
+        "notlar.txt",
+    ])
+
+    assert result["double_extension_files"] == ["fatura.pdf.exe"]
+    assert result["risk_level"] == "HIGH"
+
+
+def test_analyzer_reports_suspicious_files(tmp_path):
+    from zip_analyzer.analyzer import analyze_zip
+
+    zip_path = tmp_path / "supheli.zip"
+
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("fatura.pdf.exe", "test")
+        archive.writestr("notlar.txt", "normal")
+
+    report = analyze_zip(zip_path)
+
+    assert report["status"] == "OK"
+    assert "fatura.pdf.exe" in report["suspicious_files"]
+    assert "fatura.pdf.exe" in report["double_extension_files"]
+    assert report["risk_level"] == "HIGH"
+
+def test_nested_zip_analysis(tmp_path):
+    import zipfile
+    from zip_analyzer.analyzer import analyze_zip
+
+    inner_zip = tmp_path / "inner.zip"
+
+    with zipfile.ZipFile(inner_zip, "w") as inner:
+        inner.writestr("belge.txt", "Merhaba")
+        inner.writestr("program.exe", "test")
+
+    outer_zip = tmp_path / "outer.zip"
+
+    with zipfile.ZipFile(outer_zip, "w") as outer:
+        outer.write(inner_zip, "inner.zip")
+
+    report = analyze_zip(outer_zip)
+
+    assert report["status"] == "OK"
+    assert len(report["nested_archive_reports"]) == 1
+
+    nested_report = report["nested_archive_reports"][0]
+
+    assert nested_report["status"] == "OK"
+    assert nested_report["total_files"] == 2
+    assert "program.exe" in nested_report["suspicious_files"]
+    assert nested_report["risk_level"] == "MEDIUM"
