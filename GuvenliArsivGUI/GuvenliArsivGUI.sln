@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37827.9 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GuvenliArsivGUI", "GuvenliArsivGUI.csproj", "{D35CCEA2-D524-4D81-9141-48C3BD1475B1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D35CCEA2-D524-4D81-9141-48C3BD1475B1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D35CCEA2-D524-4D81-9141-48C3BD1475B1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D35CCEA2-D524-4D81-9141-48C3BD1475B1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D35CCEA2-D524-4D81-9141-48C3BD1475B1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6321A9C4-33AA-4B28-9ECF-4DD9F726FB19}
+	EndGlobalSection
+EndGlobal
