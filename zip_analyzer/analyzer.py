@@ -16,6 +16,7 @@ ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".gz")
 MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
 MAX_METADATA_ENTRIES = 10_000
 MAX_NESTED_ARCHIVE_SIZE = 50 * 1024 * 1024
+MAX_NESTED_DEPTH = 4
 
 
 def is_suspicious_path(filename):
@@ -31,7 +32,7 @@ def is_suspicious_path(filename):
     )
 
 
-def analyze_nested_zip(archive_data, filename):
+def analyze_nested_zip(archive_data, filename, depth=1):
     """Bellekteki iç ZIP dosyasını çıkartmadan analiz eder."""
     result = {
         "file_name": filename,
@@ -107,6 +108,49 @@ def analyze_nested_zip(archive_data, filename):
                 nested_archive_count=nested_count,
             )
 
+            nested_reports = []
+            for entry in files:
+                if not entry.filename.lower().endswith(".zip"):
+                    continue
+
+                if depth >= MAX_NESTED_DEPTH:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "Çok derin iç içe arşiv.",
+                    })
+                    continue
+
+                if entry.file_size > MAX_NESTED_ARCHIVE_SIZE:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "İç ZIP dosyası boyut sınırını aşıyor.",
+                    })
+                    continue
+
+                try:
+                    with nested.open(entry, "r") as handle:
+                        data = handle.read(MAX_NESTED_ARCHIVE_SIZE + 1)
+                except (OSError, RuntimeError, ValueError,
+                        EOFError, zipfile.BadZipFile):
+                    continue
+
+                if len(data) > MAX_NESTED_ARCHIVE_SIZE:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "İç ZIP dosyası boyut sınırını aşıyor.",
+                    })
+                    continue
+
+                nested_reports.append(
+                    analyze_nested_zip(data, entry.filename, depth + 1)
+                )
+
             warnings = list(archive_risk["warnings"])
             warnings.extend(special_risk["warnings"])
             warnings.extend(suspicious_risk["warnings"])
@@ -122,6 +166,14 @@ def analyze_nested_zip(archive_data, filename):
 
             if suspicious_paths:
                 risk_levels.append("HIGH")
+
+            for item in nested_reports:
+                if item["risk_level"] in ("HIGH", "MEDIUM"):
+                    risk_levels.append(item["risk_level"])
+                    warnings.append(
+                        f"İç ZIP {item['risk_level']} riskli: "
+                        f"{item['file_name']}"
+                    )
 
             if "HIGH" in risk_levels:
                 final_risk = "HIGH"
