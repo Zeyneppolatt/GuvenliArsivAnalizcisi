@@ -11,6 +11,8 @@ def print_summary(report):
     print(f"Dosya: {report['file_name']}")
     print(f"Durum: {report['status']}")
     print(f"Risk seviyesi: {report['risk_level']}")
+    print(f"Risk skoru: {report.get('risk_score', 0)}/100")
+    print(f"Analiz süresi: {report.get('analysis_time_ms', 0)} ms")
     print(f"Dosya sayısı: {report['total_files']}")
     print(f"Açılmış boyut: {report['uncompressed_size']} bayt")
     print(f"Sıkıştırılmış boyut: {report['compressed_size']} bayt")
@@ -32,6 +34,10 @@ def print_summary(report):
         "Çift uzantılı dosya sayısı: "
         f"{len(report['double_extension_files'])}"
     )
+    print(f"Yüksek oranlı dosya sayısı: {len(report['high_ratio_files'])}")
+    print(f"Çakışan giriş sayısı: {len(report['overlapping_entries'])}")
+    print(f"Gizlenmiş çalıştırılabilir sayısı: {len(report['disguised_files'])}")
+    print(f"Hash'lenen dosya sayısı: {len(report['file_hashes'])}")
 
     if report["nested_archive_reports"]:
         print("\nİç ZIP analizleri:")
@@ -85,6 +91,10 @@ def analyze_path(target):
         "symlink_files": [],
         "suspicious_files": [],
         "double_extension_files": [],
+        "high_ratio_files": [],
+        "overlapping_entries": [],
+        "disguised_files": [],
+        "file_hashes": [],
         "warnings": [],
         "error": "Dosya veya klasör bulunamadı.",
     }]

@@ -164,3 +164,34 @@ def evaluate_suspicious_files(filenames):
         "double_extension_files": double_extension_files,
         "warnings": warnings,
     }
+EXECUTABLE_EXTENSIONS = {".exe", ".dll", ".scr", ".com", ".msi", ".pif", ".sys"}
+MAX_PER_FILE_RATIO = 100
+
+
+def find_high_ratio_files(entries, limit=MAX_PER_FILE_RATIO):
+    """Dosya başına sıkıştırma oranı sınırı aşanları döndürür."""
+    hits = []
+    for entry in entries:
+        ratio = calculate_compression_ratio(
+            entry.compress_size, entry.file_size
+        )
+        if ratio > limit:
+            hits.append(entry.filename)
+    return hits
+def find_overlapping_entries(entries):
+    """Veri aralıkları üst üste binen girişleri bulur (overlap bomb)."""
+    ranges = sorted(
+        (e.header_offset, e.header_offset + e.compress_size, e.filename)
+        for e in entries
+        if e.compress_size > 0
+    )
+    overlaps = []
+    for previous, current in zip(ranges, ranges[1:]):
+        if current[0] < previous[1]:
+            overlaps.append(current[2])
+    return overlaps
+def is_disguised_executable(filename, header):
+    """İçeriği exe/ELF olduğu halde uzantısı başka olan dosyayı yakalar."""
+    ext = Path(filename).suffix.lower()
+    looks_executable = header[:2] == b"MZ" or header[:4] == b"\x7fELF"
+    return looks_executable and ext not in EXECUTABLE_EXTENSIONS

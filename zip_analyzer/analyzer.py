@@ -1,6 +1,7 @@
-
 import io
 import zipfile
+import hashlib
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -8,13 +9,61 @@ from zip_analyzer.rules import (
     evaluate_archive,
     evaluate_special_entries,
     evaluate_suspicious_files,
+    find_high_ratio_files,
+    find_overlapping_entries,
+    is_disguised_executable,
 )
 
 ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".gz")
 MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
 MAX_METADATA_ENTRIES = 10_000
 MAX_NESTED_ARCHIVE_SIZE = 50 * 1024 * 1024
+MAX_NESTED_DEPTH = 4
+MAX_HASH_FILE_SIZE = 50 * 1024 * 1024
+HASH_CHUNK_SIZE = 64 * 1024
 
+
+def compute_file_hashes(archive, files, skip_names):
+    """Dosyaları diske çıkarmadan, parça parça SHA-256 hesaplar."""
+    hashes = []
+
+    for entry in files:
+        if entry.filename in skip_names:
+            continue
+        if entry.flag_bits & 0x1:
+            continue
+        if entry.file_size > MAX_HASH_FILE_SIZE:
+            continue
+
+        sha = hashlib.sha256()
+        read_total = 0
+        too_big = False
+
+        try:
+            with archive.open(entry, "r") as handle:
+                while True:
+                    chunk = handle.read(HASH_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    read_total += len(chunk)
+                    if read_total > MAX_HASH_FILE_SIZE:
+                        too_big = True
+                        break
+                    sha.update(chunk)
+        except (OSError, RuntimeError, ValueError,
+                EOFError, zipfile.BadZipFile):
+            continue
+
+        if too_big:
+            continue
+
+        hashes.append({
+            "name": entry.filename,
+            "size": entry.file_size,
+            "sha256": sha.hexdigest(),
+        })
+
+    return hashes
 
 def is_suspicious_path(filename):
     """Şüpheli arşiv içi yolları belirler."""
@@ -27,9 +76,43 @@ def is_suspicious_path(filename):
         or (len(normalized) >= 2 and normalized[1] == ":")
         or "\x00" in normalized
     )
+def calculate_risk_score(report):
+    """Rapordaki bulgulara göre 0-100 arası risk skoru üretir."""
+    if report["status"] != "OK":
+        return 0
 
+    score = 0
 
-def analyze_nested_zip(archive_data, filename):
+    if report["high_ratio_files"]:
+        score += 40
+    if report["overlapping_entries"]:
+        score += 40
+    if report["disguised_files"]:
+        score += 35
+    if report["suspicious_paths"]:
+        score += 30
+    if report["double_extension_files"]:
+        score += 30
+    if report["symlink_files"]:
+        score += 25
+    if report["suspicious_files"]:
+        score += 15
+    if report["encrypted_files"]:
+        score += 10
+    if report["nested_archives"]:
+        score += 5
+    if any(
+        item["risk_level"] == "HIGH"
+        for item in report["nested_archive_reports"]
+    ):
+        score += 70
+    if report["compression_ratio"] > 100:
+        score += 30
+    if report["risk_level"] == "HIGH":
+        score = max(score, 70)
+    return min(score, 100)
+
+def analyze_nested_zip(archive_data, filename, depth=1):
     """Bellekteki iç ZIP dosyasını çıkartmadan analiz eder."""
     result = {
         "file_name": filename,
@@ -105,6 +188,49 @@ def analyze_nested_zip(archive_data, filename):
                 nested_archive_count=nested_count,
             )
 
+            nested_reports = []
+            for entry in files:
+                if not entry.filename.lower().endswith(".zip"):
+                    continue
+
+                if depth >= MAX_NESTED_DEPTH:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "Çok derin iç içe arşiv.",
+                    })
+                    continue
+
+                if entry.file_size > MAX_NESTED_ARCHIVE_SIZE:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "İç ZIP dosyası boyut sınırını aşıyor.",
+                    })
+                    continue
+
+                try:
+                    with nested.open(entry, "r") as handle:
+                        data = handle.read(MAX_NESTED_ARCHIVE_SIZE + 1)
+                except (OSError, RuntimeError, ValueError,
+                        EOFError, zipfile.BadZipFile):
+                    continue
+
+                if len(data) > MAX_NESTED_ARCHIVE_SIZE:
+                    nested_reports.append({
+                        "file_name": entry.filename,
+                        "status": "SKIPPED",
+                        "risk_level": "HIGH",
+                        "error": "İç ZIP dosyası boyut sınırını aşıyor.",
+                    })
+                    continue
+
+                nested_reports.append(
+                    analyze_nested_zip(data, entry.filename, depth + 1)
+                )
+
             warnings = list(archive_risk["warnings"])
             warnings.extend(special_risk["warnings"])
             warnings.extend(suspicious_risk["warnings"])
@@ -120,6 +246,14 @@ def analyze_nested_zip(archive_data, filename):
 
             if suspicious_paths:
                 risk_levels.append("HIGH")
+
+            for item in nested_reports:
+                if item["risk_level"] in ("HIGH", "MEDIUM"):
+                    risk_levels.append(item["risk_level"])
+                    warnings.append(
+                        f"İç ZIP {item['risk_level']} riskli: "
+                        f"{item['file_name']}"
+                    )
 
             if "HIGH" in risk_levels:
                 final_risk = "HIGH"
@@ -153,7 +287,7 @@ def analyze_nested_zip(archive_data, filename):
     return result
 
 
-def analyze_zip(file_path):
+def _analyze_zip_core(file_path):
     """ZIP dosyasını çıkartmadan metadata üzerinden analiz eder."""
     path = Path(file_path)
 
@@ -173,6 +307,10 @@ def analyze_zip(file_path):
         "symlink_files": [],
         "suspicious_files": [],
         "double_extension_files": [],
+        "high_ratio_files": [],
+        "overlapping_entries": [],
+        "disguised_files": [],
+          "file_hashes": [],
         "warnings": [],
         "error": None,
     }
@@ -295,6 +433,26 @@ def analyze_zip(file_path):
                         "error": str(error),
                     })
 
+            high_ratio_files = find_high_ratio_files(files)
+            overlapping_entries = find_overlapping_entries(files)
+
+            disguised_files = []
+            for entry in files:
+                if entry.flag_bits & 0x1:
+                    continue
+                try:
+                    with archive.open(entry, "r") as handle:
+                        header = handle.read(4)
+                except (OSError, RuntimeError, ValueError,
+                        EOFError, zipfile.BadZipFile):
+                    continue
+                if is_disguised_executable(entry.filename, header):
+                    disguised_files.append(entry.filename)
+            file_hashes = compute_file_hashes(
+                archive,
+                files,
+                skip_names=set(high_ratio_files) | set(overlapping_entries),
+            )
             file_types = Counter(
                 Path(entry.filename).suffix.lower() or "[uzantısız]"
                 for entry in files
@@ -319,6 +477,19 @@ def analyze_zip(file_path):
             warnings.extend(special_risk["warnings"])
             warnings.extend(suspicious_risk["warnings"])
 
+            if high_ratio_files:
+                warnings.append(
+                    f"{len(high_ratio_files)} dosyada sıkıştırma oranı çok yüksek."
+                )
+            if overlapping_entries:
+                warnings.append(
+                    "Çakışan dosya girişleri bulundu (overlap bomb olabilir)."
+                )
+            if disguised_files:
+                warnings.append(
+                    f"{len(disguised_files)} dosya uzantısını gizleyen çalıştırılabilir içeriyor."
+                )
+
             if suspicious_paths:
                 warnings.append(
                     "Şüpheli dosya yolu bulundu: "
@@ -342,6 +513,9 @@ def analyze_zip(file_path):
             ]
 
             if suspicious_paths:
+                risk_levels.append("HIGH")
+
+            if high_ratio_files or overlapping_entries or disguised_files:
                 risk_levels.append("HIGH")
 
             if any(
@@ -379,6 +553,10 @@ def analyze_zip(file_path):
                 "double_extension_files": suspicious_risk[
                     "double_extension_files"
                 ],
+                "high_ratio_files": high_ratio_files,
+                "overlapping_entries": overlapping_entries,
+                "disguised_files": disguised_files,
+                "file_hashes": file_hashes,
                 "warnings": warnings,
             })
 
@@ -392,4 +570,13 @@ def analyze_zip(file_path):
     ) as error:
         report["error"] = f"Arşiv okunamadı: {error}"
 
+    return report
+def analyze_zip(file_path):
+    """ZIP dosyasını analiz eder, risk skoru ve süreyi ekler."""
+    start = time.perf_counter()
+    report = _analyze_zip_core(file_path)
+    report["analysis_time_ms"] = round(
+        (time.perf_counter() - start) * 1000, 1
+    )
+    report["risk_score"] = calculate_risk_score(report)
     return report
