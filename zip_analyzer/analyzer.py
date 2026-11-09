@@ -1,5 +1,6 @@
 import io
 import zipfile
+import hashlib
 from collections import Counter
 from pathlib import Path
 
@@ -17,7 +18,51 @@ MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
 MAX_METADATA_ENTRIES = 10_000
 MAX_NESTED_ARCHIVE_SIZE = 50 * 1024 * 1024
 MAX_NESTED_DEPTH = 4
+MAX_HASH_FILE_SIZE = 50 * 1024 * 1024
+HASH_CHUNK_SIZE = 64 * 1024
 
+
+def compute_file_hashes(archive, files, skip_names):
+    """Dosyaları diske çıkarmadan, parça parça SHA-256 hesaplar."""
+    hashes = []
+
+    for entry in files:
+        if entry.filename in skip_names:
+            continue
+        if entry.flag_bits & 0x1:
+            continue
+        if entry.file_size > MAX_HASH_FILE_SIZE:
+            continue
+
+        sha = hashlib.sha256()
+        read_total = 0
+        too_big = False
+
+        try:
+            with archive.open(entry, "r") as handle:
+                while True:
+                    chunk = handle.read(HASH_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    read_total += len(chunk)
+                    if read_total > MAX_HASH_FILE_SIZE:
+                        too_big = True
+                        break
+                    sha.update(chunk)
+        except (OSError, RuntimeError, ValueError,
+                EOFError, zipfile.BadZipFile):
+            continue
+
+        if too_big:
+            continue
+
+        hashes.append({
+            "name": entry.filename,
+            "size": entry.file_size,
+            "sha256": sha.hexdigest(),
+        })
+
+    return hashes
 
 def is_suspicious_path(filename):
     """Şüpheli arşiv içi yolları belirler."""
@@ -230,6 +275,7 @@ def analyze_zip(file_path):
         "high_ratio_files": [],
         "overlapping_entries": [],
         "disguised_files": [],
+          "file_hashes": [],
         "warnings": [],
         "error": None,
     }
@@ -367,7 +413,11 @@ def analyze_zip(file_path):
                     continue
                 if is_disguised_executable(entry.filename, header):
                     disguised_files.append(entry.filename)
-
+            file_hashes = compute_file_hashes(
+                archive,
+                files,
+                skip_names=set(high_ratio_files) | set(overlapping_entries),
+            )
             file_types = Counter(
                 Path(entry.filename).suffix.lower() or "[uzantısız]"
                 for entry in files
@@ -471,6 +521,7 @@ def analyze_zip(file_path):
                 "high_ratio_files": high_ratio_files,
                 "overlapping_entries": overlapping_entries,
                 "disguised_files": disguised_files,
+                "file_hashes": file_hashes,
                 "warnings": warnings,
             })
 
