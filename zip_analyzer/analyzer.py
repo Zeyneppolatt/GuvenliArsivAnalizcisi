@@ -1,6 +1,7 @@
 import io
 import zipfile
 import hashlib
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -75,7 +76,41 @@ def is_suspicious_path(filename):
         or (len(normalized) >= 2 and normalized[1] == ":")
         or "\x00" in normalized
     )
+def calculate_risk_score(report):
+    """Rapordaki bulgulara göre 0-100 arası risk skoru üretir."""
+    if report["status"] != "OK":
+        return 0
 
+    score = 0
+
+    if report["high_ratio_files"]:
+        score += 40
+    if report["overlapping_entries"]:
+        score += 40
+    if report["disguised_files"]:
+        score += 35
+    if report["suspicious_paths"]:
+        score += 30
+    if report["double_extension_files"]:
+        score += 30
+    if report["symlink_files"]:
+        score += 25
+    if report["suspicious_files"]:
+        score += 15
+    if report["encrypted_files"]:
+        score += 10
+    if report["nested_archives"]:
+        score += 5
+    if any(
+        item["risk_level"] == "HIGH"
+        for item in report["nested_archive_reports"]
+    ):
+        score += 70
+    if report["compression_ratio"] > 100:
+        score += 30
+    if report["risk_level"] == "HIGH":
+        score = max(score, 70)
+    return min(score, 100)
 
 def analyze_nested_zip(archive_data, filename, depth=1):
     """Bellekteki iç ZIP dosyasını çıkartmadan analiz eder."""
@@ -252,7 +287,7 @@ def analyze_nested_zip(archive_data, filename, depth=1):
     return result
 
 
-def analyze_zip(file_path):
+def _analyze_zip_core(file_path):
     """ZIP dosyasını çıkartmadan metadata üzerinden analiz eder."""
     path = Path(file_path)
 
@@ -535,4 +570,13 @@ def analyze_zip(file_path):
     ) as error:
         report["error"] = f"Arşiv okunamadı: {error}"
 
+    return report
+def analyze_zip(file_path):
+    """ZIP dosyasını analiz eder, risk skoru ve süreyi ekler."""
+    start = time.perf_counter()
+    report = _analyze_zip_core(file_path)
+    report["analysis_time_ms"] = round(
+        (time.perf_counter() - start) * 1000, 1
+    )
+    report["risk_score"] = calculate_risk_score(report)
     return report
