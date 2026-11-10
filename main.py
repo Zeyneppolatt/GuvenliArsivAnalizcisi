@@ -1,4 +1,4 @@
-
+from zip_analyzer.sevenzip import analyze_7z
 import argparse
 import json
 import sys
@@ -59,21 +59,25 @@ def print_summary(report):
 
     if report["error"]:
         print(f"\nHata: {report['error']}")
-
+def analyze_file(path):
+    """Uzantıya göre doğru analizciyi seçer."""
+    if Path(path).suffix.lower() == ".7z":
+        return analyze_7z(path)
+    return analyze_zip(path)
 
 def analyze_path(target):
     """Bir ZIP dosyasını veya klasördeki ZIP dosyalarını analiz eder."""
     path = Path(target)
 
     if path.is_file():
-        return [analyze_zip(path)]
+               return [analyze_file(path)]
 
     if path.is_dir():
-        zip_files = sorted(
+        archives = sorted(
             item for item in path.iterdir()
-            if item.is_file() and item.suffix.lower() == ".zip"
+            if item.is_file() and item.suffix.lower() in (".zip", ".7z")
         )
-        return [analyze_zip(item) for item in zip_files]
+        return [analyze_file(item) for item in archives]
 
     return [{
         "file_name": path.name,
