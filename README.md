@@ -1,145 +1,59 @@
+# Güvenli Arşiv Analizcisi - ZIP Analiz Motoru
 
-# Güvenli Arşiv Analizcisi
-
-ZIP arşivlerini herhangi bir dosyayı dışarı çıkarmadan analiz eden, potansiyel güvenlik risklerini tespit eden Python tabanlı bir güvenlik aracıdır.
-
-## Proje Hakkında
-
-Güvenli Arşiv Analizcisi, ZIP dosyalarının içeriğini çıkartmadan metadata üzerinden inceleyerek şüpheli durumları belirlemek amacıyla geliştirilmiştir.
-
-Özellikle zararlı olabilecek dosya uzantıları, yanıltıcı dosya adları, aşırı sıkıştırma oranları ve iç içe arşivler analiz edilir.
+ZIP arşivlerini **diske çıkarmadan**, sadece başlık (metadata) üzerinden analiz ederek zip bombası ve şüpheli içerikleri tespit eden savunma odaklı bir araçtır.
 
 ## Özellikler
 
-- ZIP arşivlerini çıkartmadan analiz etme
-- Toplam sıkıştırılmış ve açılmış boyut hesaplama
-- Sıkıştırma oranı kontrolü
-- Dosya sayısı ve boyut sınırı kontrolü
-- Şüpheli dosya yolu tespiti
-- Şifreli dosya tespiti
-- Sembolik bağlantı tespiti
-- Şüpheli dosya uzantılarının belirlenmesi
-- Çift uzantılı dosya tespiti
-- İç içe ZIP arşivlerini bir seviye derinlikte analiz etme
-- JSON formatında rapor oluşturma
-- Klasör içerisindeki ZIP dosyalarını toplu analiz etme
-- Otomatik testlerle doğrulama
-
-## Kullanılan Teknolojiler
-
-- Python
-- zipfile
-- pathlib
-- argparse
-- json
-- pytest
-
-## Proje Yapısı
-
-```text
-GuvenliArsivAnalizcisi/
-│
-├── main.py
-├── zip_analyzer/
-│   ├── __init__.py
-│   ├── analyzer.py
-│   └── rules.py
-│
-├── tests/
-│   ├── test_analyzer.py
-│   └── README.md
-│
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
+- Sıkıştırma oranı analizi (toplam ve dosya başına)
+- Toplam boyut ve dosya sayısı limitleri
+- Özyinelemeli iç içe arşiv analizi (derinlik limitli)
+- Çakışan giriş (overlap bomb) tespiti
+- Zip Slip (path traversal) tespiti
+- Şüpheli ve çift uzantılı dosya tespiti
+- Magic bytes ile gizlenmiş çalıştırılabilir dosya tespiti
+- Şifreli giriş ve sembolik bağlantı tespiti
+- SHA-256 hash çıkarma (bellekte, parça parça)
+- Risk skoru (0-100) ve analiz süresi
 
 ## Kurulum
 
-Projeyi bilgisayarınıza indirin:
-
-```bash
-git clone https://github.com/Zeyneppolatt/GuvenliArsivAnalizcisi.git
-cd GuvenliArsivAnalizcisi
-```
-
-Sanal ortam oluşturun:
-
-```bash
-python -m venv .venv
-```
-
-Sanal ortamı etkinleştirin:
-
-Windows PowerShell:
-
 ```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Gerekli paketleri yükleyin:
-
-```bash
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
 ## Kullanım
 
-Tek bir ZIP dosyasını analiz etmek:
-
-```bash
-python main.py arsiv.zip
+```powershell
+python tests/make_samples.py              # test zip'lerini üretir
+python main.py samples/normal.zip --pretty
+python main.py samples/yuksek_oran.zip --summary
+python benchmark.py samples/yuksek_oran.zip
+python -m pytest
 ```
 
-Okunabilir JSON çıktısı almak:
+## Python'dan kullanım
 
-```bash
-python main.py arsiv.zip --pretty
+```python
+from zip_analyzer.analyzer import analyze_zip
+
+report = analyze_zip("dosya.zip")
+print(report["risk_level"], report["risk_score"])
 ```
 
-Kısa analiz özeti görüntülemek:
+Dönen sözlükteki başlıca alanlar: `risk_level` (LOW/MEDIUM/HIGH), `risk_score` (0-100), `warnings`, `file_hashes`, `analysis_time_ms`.
 
-```bash
-python main.py arsiv.zip --summary
-```
+## Karşılaştırma (200 MB'lık zip bombası)
 
-JSON raporunu dosyaya kaydetmek:
+| | Bu proje | Naif `extractall` |
+|---|---|---|
+| Süre | 46.6 ms | 775.3 ms |
+| Diske yazılan veri | 0 | ~200 MB |
+| Sonuç | HIGH (tespit edildi) | Bombayı açtı |
 
-```bash
-python main.py arsiv.zip --output rapor.json
-```
+## Sınırlamalar
 
-Bir klasördeki ZIP dosyalarını toplu analiz etmek:
-
-```bash
-python main.py arsivler/ --summary --output rapor.json
-```
-
-## Risk Seviyeleri
-
-| Risk Seviyesi | Açıklama |
-|---|---|
-| LOW | Belirlenen kontrollerde önemli bir risk bulunmadı. |
-| MEDIUM | İncelenmesi gereken şüpheli durumlar bulundu. |
-| HIGH | Yüksek riskli özellikler tespit edildi. |
-| UNKNOWN | Analiz tamamlanamadı. |
-
-## Testler
-
-Testleri çalıştırmak için:
-
-```bash
-python -m pytest -q
-```
-
-## Güvenlik Notu
-
-Bu araç ZIP arşivlerini çıkartmaz ve içindeki dosyaları çalıştırmaz. Analiz işlemleri arşiv metadata bilgileri ve sınırlı boyutta belleğe alınan iç ZIP verileri üzerinden gerçekleştirilir.
-
-Tespit edilen şüpheli uzantılar tek başına bir dosyanın zararlı olduğunu kanıtlamaz. Araç, güvenlik incelemesine yardımcı olmak amacıyla geliştirilmiştir.
-
-## Geliştirici
-
-**Zeynep Polat**
-
-GitHub: https://github.com/Zeyneppolatt
+- Şifreli arşivlerin içeriği okunamaz.
+- Şu an sadece ZIP desteklenir (.7z/.rar planlanıyor).
+- Statik kontroller şüphe işareti verir, zararlı olduğunu kanıtlamaz; kesin karar hash'in VirusTotal eşleşmesine ve YARA kurallarına bağlıdır.
