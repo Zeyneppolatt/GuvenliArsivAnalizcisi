@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:GuvenliArsivGUI.Converters"
-        Title="Güvenli Arşiv Analizcisi" Height="740" Width="1180" MinWidth="920" MinHeight="600"
+        Title="Güvenli Arşiv Analizcisi" Height="760" Width="1220" MinWidth="960" MinHeight="620"
         WindowStartupLocation="CenterScreen"
         Background="#0F172A" Foreground="#F8FAFC"
         AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver">
@@ -199,7 +199,7 @@
 						</DataGrid.CellStyle>
 						<DataGrid.Columns>
 							<DataGridTextColumn Header="Arşiv Adı" Binding="{Binding FileName}" Width="*" SortMemberPath="FileName"/>
-							<DataGridTemplateColumn Header="Risk" Width="88" SortMemberPath="RiskLevel">
+							<DataGridTemplateColumn Header="Risk" Width="82" SortMemberPath="RiskLevel">
 								<DataGridTemplateColumn.CellTemplate>
 									<DataTemplate>
 										<Border CornerRadius="4" Padding="6,2" HorizontalAlignment="Center">
@@ -224,9 +224,10 @@
 									</DataTemplate>
 								</DataGridTemplateColumn.CellTemplate>
 							</DataGridTemplateColumn>
-							<DataGridTextColumn Header="Skor" Binding="{Binding RiskScore}" Width="55" SortMemberPath="RiskScore"/>
-							<DataGridTextColumn Header="Dosya" Binding="{Binding TotalFiles}" Width="60" SortMemberPath="TotalFiles"/>
-							<DataGridTextColumn Header="Oran" Binding="{Binding CompressionRatioDisplay}" Width="75" SortMemberPath="CompressionRatio"/>
+							<DataGridTextColumn Header="Skor" Binding="{Binding RiskScore}" Width="50" SortMemberPath="RiskScore"/>
+							<DataGridTextColumn Header="Dosya" Binding="{Binding TotalFiles}" Width="55" SortMemberPath="TotalFiles"/>
+							<DataGridTextColumn Header="Oran" Binding="{Binding CompressionRatioDisplay}" Width="68" SortMemberPath="CompressionRatio"/>
+							<DataGridTextColumn Header="Süre" Binding="{Binding AnalysisTimeMs, StringFormat={}{0:F1} ms}" Width="72" SortMemberPath="AnalysisTimeMs"/>
 						</DataGrid.Columns>
 					</DataGrid>
 				</Grid>
@@ -242,8 +243,39 @@
                                    Foreground="#64748B" TextWrapping="Wrap"/>
 
 						<StackPanel Visibility="{Binding HasSelectedReport, Converter={StaticResource BoolToVis}}">
-							<TextBlock Text="{Binding DetailHeader}" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" TextWrapping="Wrap"/>
-							<TextBlock Text="{Binding DetailStats}" FontSize="12" Foreground="#94A3B8" Margin="0,4,0,14" TextWrapping="Wrap"/>
+							<TextBlock Text="{Binding DetailHeader}" FontSize="17" FontWeight="Bold" Foreground="#38BDF8" TextWrapping="Wrap"/>
+							<TextBlock Text="{Binding DetailStats}" FontSize="12" Foreground="#94A3B8" Margin="0,4,0,12" TextWrapping="Wrap"/>
+
+							<!-- Sunum İçin 4'lü Özet Metrik Kartları -->
+							<UniformGrid Columns="4" Margin="0,0,0,16">
+								<Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,6,0">
+									<StackPanel>
+										<TextBlock Text="RİSK SKORU" FontSize="10" FontWeight="SemiBold" Foreground="#94A3B8"/>
+										<TextBlock Text="{Binding SelectedScoreCard}" FontSize="15" FontWeight="Bold" Foreground="#F87171" Margin="0,3,0,0"/>
+									</StackPanel>
+								</Border>
+
+								<Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,6,0">
+									<StackPanel>
+										<TextBlock Text="ANALİZ SÜRESİ" FontSize="10" FontWeight="SemiBold" Foreground="#94A3B8"/>
+										<TextBlock Text="{Binding SelectedTimeCard}" FontSize="15" FontWeight="Bold" Foreground="#34D399" Margin="0,3,0,0"/>
+									</StackPanel>
+								</Border>
+
+								<Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,6,0">
+									<StackPanel>
+										<TextBlock Text="SIKIŞTIRMA" FontSize="10" FontWeight="SemiBold" Foreground="#94A3B8"/>
+										<TextBlock Text="{Binding SelectedRatioCard}" FontSize="15" FontWeight="Bold" Foreground="#FBBF24" Margin="0,3,0,0"/>
+									</StackPanel>
+								</Border>
+
+								<Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="10,8">
+									<StackPanel>
+										<TextBlock Text="İÇERİK SAYISI" FontSize="10" FontWeight="SemiBold" Foreground="#94A3B8"/>
+										<TextBlock Text="{Binding SelectedFilesCard}" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,3,0,0"/>
+									</StackPanel>
+								</Border>
+							</UniformGrid>
 
 							<TextBlock Text="Tespit Edilen Uyarılar" FontWeight="SemiBold" Foreground="#F87171" Margin="0,0,0,6"/>
 							<ItemsControl ItemsSource="{Binding SelectedWarnings}" Margin="0,0,0,14">

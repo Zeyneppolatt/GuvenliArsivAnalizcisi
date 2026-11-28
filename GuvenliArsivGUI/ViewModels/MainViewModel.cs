@@ -110,6 +110,10 @@ namespace GuvenliArsivGUI.ViewModels
                     OnPropertyChanged(nameof(HasSelectedReport));
                     OnPropertyChanged(nameof(DetailHeader));
                     OnPropertyChanged(nameof(DetailStats));
+                    OnPropertyChanged(nameof(SelectedScoreCard));
+                    OnPropertyChanged(nameof(SelectedTimeCard));
+                    OnPropertyChanged(nameof(SelectedRatioCard));
+                    OnPropertyChanged(nameof(SelectedFilesCard));
                     OnPropertyChanged(nameof(SelectedWarnings));
                     OnPropertyChanged(nameof(TechnicalFindingsText));
                 }
@@ -120,12 +124,17 @@ namespace GuvenliArsivGUI.ViewModels
 
         public string DetailHeader => SelectedReport == null
             ? string.Empty
-            : $"{SelectedReport.FileName}  [{SelectedReport.RiskLevelTr} | Skor: {SelectedReport.RiskScore}/100]";
+            : $"{SelectedReport.FileName}  [{SelectedReport.RiskLevelTr}]";
 
         public string DetailStats => SelectedReport == null
             ? string.Empty
-            : $"Dosya: {SelectedReport.TotalFiles}  |  Sıkıştırılmış: {FormatBytes(SelectedReport.CompressedSize)}  |  Açılmış: {FormatBytes(SelectedReport.UncompressedSize)}  |  Oran: {SelectedReport.CompressionRatioDisplay}  |  Süre: {SelectedReport.AnalysisTimeMs:F0} ms";
+            : $"Sıkıştırılmış: {FormatBytes(SelectedReport.CompressedSize)}  |  Açılmış: {FormatBytes(SelectedReport.UncompressedSize)}  |  Durum: {SelectedReport.Status}";
 
+        public string SelectedScoreCard => SelectedReport == null ? "-" : $"{SelectedReport.RiskScore} / 100";
+        public string SelectedTimeCard => SelectedReport == null ? "-" : $"{SelectedReport.AnalysisTimeMs:F1} ms";
+        public string SelectedRatioCard => SelectedReport == null ? "-" : SelectedReport.CompressionRatioDisplay;
+        public string SelectedFilesCard => SelectedReport == null ? "-" : $"{SelectedReport.TotalFiles} öğe";
+        
         public IEnumerable<string> SelectedWarnings
         {
             get
