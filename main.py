@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from zip_analyzer.analyzer import analyze_zip
+from zip_analyzer.sevenzip import analyze_7z
 
 
 def print_summary(report):
@@ -70,21 +71,28 @@ def print_summary(report):
         print(f"\nHata: {report['error']}")
 
 
+def analyze_file(path, safe_mode=True, vt_api_key=None):
+    """Uzantıya göre doğru analizciyi seçer."""
+    if Path(path).suffix.lower() == ".7z":
+        return analyze_7z(path)
+    return analyze_zip(path, safe_mode=safe_mode, vt_api_key=vt_api_key)
+
+
 def analyze_path(target, safe_mode=True, vt_api_key=None):
-    """Bir ZIP dosyasını veya klasördeki ZIP dosyalarını analiz eder."""
+    """Bir arşiv dosyasını veya klasördeki ZIP/7z dosyalarını analiz eder."""
     path = Path(target)
 
     if path.is_file():
-        return [analyze_zip(path, safe_mode=safe_mode, vt_api_key=vt_api_key)]
+        return [analyze_file(path, safe_mode=safe_mode, vt_api_key=vt_api_key)]
 
     if path.is_dir():
-        zip_files = sorted(
+        archives = sorted(
             item for item in path.iterdir()
-            if item.is_file() and item.suffix.lower() == ".zip"
+            if item.is_file() and item.suffix.lower() in (".zip", ".7z")
         )
         return [
-            analyze_zip(item, safe_mode=safe_mode, vt_api_key=vt_api_key)
-            for item in zip_files
+            analyze_file(item, safe_mode=safe_mode, vt_api_key=vt_api_key)
+            for item in archives
         ]
 
     return [{
@@ -114,12 +122,12 @@ def analyze_path(target, safe_mode=True, vt_api_key=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ZIP arşivlerini çıkartmadan analiz eder."
+        description="ZIP ve 7z arşivlerini çıkartmadan analiz eder."
     )
 
     parser.add_argument(
         "path",
-        help="Analiz edilecek ZIP dosyası veya ZIP dosyalarını içeren klasör",
+        help="Analiz edilecek arşiv dosyası veya arşivleri içeren klasör",
     )
 
     parser.add_argument(
