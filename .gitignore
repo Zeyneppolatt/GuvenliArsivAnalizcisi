@@ -12,3 +12,12 @@ obj/
 .vs/
 *.user
 publish/
+
+# .NET / WPF
+bin/
+obj/
+.vs/
+*.user
+*.suo
+publish/
+engine/
