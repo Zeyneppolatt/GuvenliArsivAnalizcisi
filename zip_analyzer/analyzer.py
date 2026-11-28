@@ -13,6 +13,7 @@ from zip_analyzer.rules import (
     find_overlapping_entries,
     is_disguised_executable,
 )
+from zip_analyzer.threat_intel import run_threat_intelligence
 
 ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".gz")
 MAX_ARCHIVE_SIZE = 1024 * 1024 * 1024
@@ -65,6 +66,7 @@ def compute_file_hashes(archive, files, skip_names):
 
     return hashes
 
+
 def is_suspicious_path(filename):
     """Şüpheli arşiv içi yolları belirler."""
     normalized = filename.replace("\\", "/")
@@ -76,6 +78,8 @@ def is_suspicious_path(filename):
         or (len(normalized) >= 2 and normalized[1] == ":")
         or "\x00" in normalized
     )
+
+
 def calculate_risk_score(report):
     """Rapordaki bulgulara göre 0-100 arası risk skoru üretir."""
     if report["status"] != "OK":
@@ -108,9 +112,17 @@ def calculate_risk_score(report):
         score += 70
     if report["compression_ratio"] > 100:
         score += 30
+
+    threat_intel = report.get("threat_intel", {})
+    if threat_intel.get("vt_malicious_count", 0) > 0:
+        score += 80
+    if threat_intel.get("yara_match_count", 0) > 0:
+        score += 50
+
     if report["risk_level"] == "HIGH":
         score = max(score, 70)
     return min(score, 100)
+
 
 def analyze_nested_zip(archive_data, filename, depth=1):
     """Bellekteki iç ZIP dosyasını çıkartmadan analiz eder."""
@@ -310,7 +322,7 @@ def _analyze_zip_core(file_path):
         "high_ratio_files": [],
         "overlapping_entries": [],
         "disguised_files": [],
-          "file_hashes": [],
+        "file_hashes": [],
         "warnings": [],
         "error": None,
     }
@@ -448,6 +460,7 @@ def _analyze_zip_core(file_path):
                     continue
                 if is_disguised_executable(entry.filename, header):
                     disguised_files.append(entry.filename)
+
             file_hashes = compute_file_hashes(
                 archive,
                 files,
@@ -571,10 +584,36 @@ def _analyze_zip_core(file_path):
         report["error"] = f"Arşiv okunamadı: {error}"
 
     return report
-def analyze_zip(file_path):
-    """ZIP dosyasını analiz eder, risk skoru ve süreyi ekler."""
+
+
+def analyze_zip(file_path, safe_mode=True, vt_api_key=None):
+    """ZIP dosyasını analiz eder, tehdit istihbaratı, risk skoru ve süreyi ekler."""
     start = time.perf_counter()
     report = _analyze_zip_core(file_path)
+
+    if report["status"] == "OK":
+        skip_names = set(report["high_ratio_files"]) | set(report["overlapping_entries"])
+        threat_report = run_threat_intelligence(
+            file_path=file_path,
+            file_hashes=report["file_hashes"],
+            skip_names=skip_names,
+            safe_mode=safe_mode,
+            vt_api_key=vt_api_key,
+        )
+        report["threat_intel"] = threat_report
+
+        if threat_report["vt_malicious_count"] > 0:
+            report["risk_level"] = "HIGH"
+            report["warnings"].append(
+                f"VirusTotal uyarısı: {threat_report['vt_malicious_count']} motor zararlı tespit etti!"
+            )
+        if threat_report["yara_match_count"] > 0:
+            report["risk_level"] = "HIGH"
+            for match in threat_report["yara_scan"]["matches"]:
+                report["warnings"].append(
+                    f"YARA kuralı eşleşti [{match['rule']}]: {match['file_name']}"
+                )
+
     report["analysis_time_ms"] = round(
         (time.perf_counter() - start) * 1000, 1
     )

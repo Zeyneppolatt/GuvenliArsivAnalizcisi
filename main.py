@@ -1,10 +1,10 @@
-from zip_analyzer.sevenzip import analyze_7z
 import argparse
 import json
 import sys
 from pathlib import Path
 
 from zip_analyzer.analyzer import analyze_zip
+from zip_analyzer.sevenzip import analyze_7z
 
 
 def print_summary(report):
@@ -17,6 +17,16 @@ def print_summary(report):
     print(f"Açılmış boyut: {report['uncompressed_size']} bayt")
     print(f"Sıkıştırılmış boyut: {report['compressed_size']} bayt")
     print(f"Sıkıştırma oranı: {report['compression_ratio']:.2f}")
+
+    threat = report.get("threat_intel")
+    if threat:
+        mod_text = "Aktif (Zero-Extraction)" if threat.get("safe_mode") else "Kapalı (Gelişmiş Mod)"
+        print(f"\nTehdit İstihbaratı:")
+        print(f"  Güvenli Mod: {mod_text}")
+        print(f"  Arşiv SHA-256: {threat.get('archive_sha256')}")
+        print(f"  YARA Eşleşmesi: {threat.get('yara_match_count', 0)}")
+        vt_status = threat.get("archive_vt", {}).get("status", "SKIPPED")
+        print(f"  VirusTotal Durumu: {vt_status} (Zararlı: {threat.get('vt_malicious_count', 0)})")
 
     print("\nDosya türleri:")
     if report["file_types"]:
@@ -59,25 +69,31 @@ def print_summary(report):
 
     if report["error"]:
         print(f"\nHata: {report['error']}")
-def analyze_file(path):
+
+
+def analyze_file(path, safe_mode=True, vt_api_key=None):
     """Uzantıya göre doğru analizciyi seçer."""
     if Path(path).suffix.lower() == ".7z":
         return analyze_7z(path)
-    return analyze_zip(path)
+    return analyze_zip(path, safe_mode=safe_mode, vt_api_key=vt_api_key)
 
-def analyze_path(target):
-    """Bir ZIP dosyasını veya klasördeki ZIP dosyalarını analiz eder."""
+
+def analyze_path(target, safe_mode=True, vt_api_key=None):
+    """Bir arşiv dosyasını veya klasördeki ZIP/7z dosyalarını analiz eder."""
     path = Path(target)
 
     if path.is_file():
-               return [analyze_file(path)]
+        return [analyze_file(path, safe_mode=safe_mode, vt_api_key=vt_api_key)]
 
     if path.is_dir():
         archives = sorted(
             item for item in path.iterdir()
             if item.is_file() and item.suffix.lower() in (".zip", ".7z")
         )
-        return [analyze_file(item) for item in archives]
+        return [
+            analyze_file(item, safe_mode=safe_mode, vt_api_key=vt_api_key)
+            for item in archives
+        ]
 
     return [{
         "file_name": path.name,
@@ -106,12 +122,12 @@ def analyze_path(target):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ZIP arşivlerini çıkartmadan analiz eder."
+        description="ZIP ve 7z arşivlerini çıkartmadan analiz eder."
     )
 
     parser.add_argument(
         "path",
-        help="Analiz edilecek ZIP dosyası veya ZIP dosyalarını içeren klasör",
+        help="Analiz edilecek arşiv dosyası veya arşivleri içeren klasör",
     )
 
     parser.add_argument(
@@ -131,8 +147,21 @@ def main():
         help="Kısa analiz özeti göster",
     )
 
+    parser.add_argument(
+        "--vt-key",
+        default=None,
+        help="VirusTotal API v3 anahtarı (veya VT_API_KEY ortam değişkeni)",
+    )
+
+    parser.add_argument(
+        "--unsafe-mode",
+        action="store_true",
+        help="Güvenli Mod korumasını devre dışı bırakır (gelişmiş analiz)",
+    )
+
     args = parser.parse_args()
-    reports = analyze_path(args.path)
+    safe_mode = not args.unsafe_mode
+    reports = analyze_path(args.path, safe_mode=safe_mode, vt_api_key=args.vt_key)
     is_directory = Path(args.path).is_dir()
 
     if args.summary:
