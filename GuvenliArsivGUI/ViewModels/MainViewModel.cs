@@ -4,87 +4,71 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Input;
+using System.Windows;
 using GuvenliArsivGUI.Models;
 using GuvenliArsivGUI.Services;
+using Microsoft.Win32;
 
 namespace GuvenliArsivGUI.ViewModels
 {
     public class MainViewModel : ViewModelBase
     {
-        private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".zip", ".7z", ".rar", ".tar", ".gz"
-        };
-
         private readonly ZipAnalyzerService _analyzerService;
-        private readonly IDialogService _dialogService;
-        private readonly ReportExportService _exportService;
         private readonly AppSettingsService _settingsService;
-        private readonly AppSettings _settings;
-        private CancellationTokenSource? _activeCts;
+        private CancellationTokenSource? _cts;
 
         private bool _isBusy;
-        private string _statusMessage = string.Empty;
-        private string _vtApiKey = string.Empty;
         private bool _safeMode = true;
+        private string _vtApiKey = string.Empty;
+        private string _statusMessage = "Analiz için arşiv veya klasör seçin ya da pencereye sürükleyip bırakın.";
         private ArchiveReport? _selectedReport;
-
-        public MainViewModel(
-            ZipAnalyzerService analyzerService,
-            IDialogService dialogService,
-            ReportExportService exportService,
-            AppSettingsService settingsService,
-            AppSettings settings)
-        {
-            _analyzerService = analyzerService;
-            _dialogService = dialogService;
-            _exportService = exportService;
-            _settingsService = settingsService;
-            _settings = settings;
-            _safeMode = settings.SafeMode;
-
-            _statusMessage = _analyzerService.IsConfigured
-                ? "Analiz için seçim yapın veya arşiv/klasör sürükleyip bırakın..."
-                : "Analiz motoru otomatik bulunamadı. Lütfen '⚙ Motor Seç' butonundan main.py veya zipanalyzer.exe seçin.";
-
-            SelectFilesCommand = new RelayCommand(async () => await SelectAndAnalyzeFilesAsync(), () => !IsBusy && _analyzerService.IsConfigured);
-            SelectFolderCommand = new RelayCommand(async () => await SelectAndAnalyzeFolderAsync(), () => !IsBusy && _analyzerService.IsConfigured);
-            SelectEngineCommand = new RelayCommand(SelectAndSaveEngine, () => !IsBusy);
-            CancelAnalysisCommand = new RelayCommand(CancelAnalysis, () => IsBusy);
-            ExportJsonCommand = new RelayCommand(async () => await ExportReportsAsync(isJson: true), () => !IsBusy && Reports.Count > 0);
-            ExportCsvCommand = new RelayCommand(async () => await ExportReportsAsync(isJson: false), () => !IsBusy && Reports.Count > 0);
-            ClearReportsCommand = new RelayCommand(ClearReports, () => !IsBusy && Reports.Count > 0);
-        }
 
         public ObservableCollection<ArchiveReport> Reports { get; } = new();
 
-        public string ActiveEngineText => $"Motor: {_analyzerService.ActiveEngineDisplay}";
+        public RelayCommand SelectFilesCommand { get; }
+        public RelayCommand SelectFolderCommand { get; }
+        public RelayCommand SelectEngineCommand { get; }
+        public RelayCommand CancelAnalysisCommand { get; }
+        public RelayCommand ExportJsonCommand { get; }
+        public RelayCommand ExportCsvCommand { get; }
+        public RelayCommand ClearReportsCommand { get; }
+
+        public MainViewModel()
+        {
+            _settingsService = new AppSettingsService();
+            var settings = _settingsService.Load();
+
+            _analyzerService = new ZipAnalyzerService(settings.CustomEnginePath);
+            _safeMode = settings.SafeMode;
+            _vtApiKey = settings.VtApiKey ?? string.Empty;
+
+            SelectFilesCommand = new RelayCommand(_ => SelectFiles(), _ => !IsBusy);
+            SelectFolderCommand = new RelayCommand(_ => SelectFolder(), _ => !IsBusy);
+            SelectEngineCommand = new RelayCommand(_ => SelectEngine(), _ => !IsBusy);
+            CancelAnalysisCommand = new RelayCommand(_ => CancelAnalysis(), _ => IsBusy);
+            ExportJsonCommand = new RelayCommand(_ => ExportJson(), _ => !IsBusy && Reports.Count > 0);
+            ExportCsvCommand = new RelayCommand(_ => ExportCsv(), _ => !IsBusy && Reports.Count > 0);
+            ClearReportsCommand = new RelayCommand(_ => ClearReports(), _ => !IsBusy && Reports.Count > 0);
+
+            if (!_analyzerService.IsEngineAvailable)
+            {
+                StatusMessage = "Uyarı: Analiz motoru bulunamadı. Lütfen üst çubuktan '⚙ Motor Seç' ile main.py veya zipanalyzer.exe seçin.";
+            }
+        }
 
         public bool IsBusy
         {
             get => _isBusy;
-            private set
+            set
             {
                 if (SetProperty(ref _isBusy, value))
                 {
-                    CommandManager.InvalidateRequerySuggested();
+                    RefreshCommands();
                 }
             }
-        }
-
-        public string StatusMessage
-        {
-            get => _statusMessage;
-            set => SetProperty(ref _statusMessage, value);
-        }
-
-        public string VtApiKey
-        {
-            get => _vtApiKey;
-            set => SetProperty(ref _vtApiKey, value);
         }
 
         public bool SafeMode
@@ -94,10 +78,29 @@ namespace GuvenliArsivGUI.ViewModels
             {
                 if (SetProperty(ref _safeMode, value))
                 {
-                    _settings.SafeMode = value;
-                    _settingsService.Save(_settings);
+                    SaveCurrentSettings();
                 }
             }
+        }
+
+        public string VtApiKey
+        {
+            get => _vtApiKey;
+            set
+            {
+                if (SetProperty(ref _vtApiKey, value))
+                {
+                    SaveCurrentSettings();
+                }
+            }
+        }
+
+        public string ActiveEngineText => _analyzerService.ActiveEngineDescription;
+
+        public string StatusMessage
+        {
+            get => _statusMessage;
+            set => SetProperty(ref _statusMessage, value);
         }
 
         public ArchiveReport? SelectedReport
@@ -134,7 +137,7 @@ namespace GuvenliArsivGUI.ViewModels
         public string SelectedTimeCard => SelectedReport == null ? "-" : $"{SelectedReport.AnalysisTimeMs:F1} ms";
         public string SelectedRatioCard => SelectedReport == null ? "-" : SelectedReport.CompressionRatioDisplay;
         public string SelectedFilesCard => SelectedReport == null ? "-" : $"{SelectedReport.TotalFiles} öğe";
-        
+
         public IEnumerable<string> SelectedWarnings
         {
             get
@@ -142,165 +145,198 @@ namespace GuvenliArsivGUI.ViewModels
                 if (SelectedReport == null) return Enumerable.Empty<string>();
                 return SelectedReport.Warnings.Count > 0
                     ? SelectedReport.Warnings
-                    : new[] { "Herhangi bir güvenlik uyarısı tespit edilmedi." };
+                    : new[] { "Kritik uyarı bulunmadı." };
             }
         }
 
-        public string TechnicalFindingsText => SelectedReport == null ? string.Empty : BuildTechnicalFindings(SelectedReport);
-
-        public ICommand SelectFilesCommand { get; }
-        public ICommand SelectFolderCommand { get; }
-        public ICommand SelectEngineCommand { get; }
-        public ICommand CancelAnalysisCommand { get; }
-        public ICommand ExportJsonCommand { get; }
-        public ICommand ExportCsvCommand { get; }
-        public ICommand ClearReportsCommand { get; }
-
-        private void SelectAndSaveEngine()
+        public string TechnicalFindingsText
         {
-            string? selectedPath = _dialogService.OpenEngineFile();
-            if (string.IsNullOrWhiteSpace(selectedPath)) return;
-
-            try
+            get
             {
-                _analyzerService.ConfigureEngine(selectedPath);
-                _settings.CustomEnginePath = selectedPath;
-                _settingsService.Save(_settings);
+                if (SelectedReport == null) return string.Empty;
+                var sb = new StringBuilder();
 
+                if (!string.IsNullOrWhiteSpace(SelectedReport.Error))
+                    sb.AppendLine($"[HATA] {SelectedReport.Error}\n");
+
+                if (SelectedReport.ThreatIntel != null)
+                {
+                    var ti = SelectedReport.ThreatIntel;
+                    sb.AppendLine($"• Güvenli Mod: {(ti.SafeMode ? "Aktif" : "Kapalı")}");
+                    if (!string.IsNullOrWhiteSpace(ti.ArchiveSha256))
+                        sb.AppendLine($"• Arşiv SHA-256: {ti.ArchiveSha256}");
+
+                    if (ti.YaraScan != null)
+                    {
+                        sb.AppendLine($"• YARA Taraması ({ti.YaraScan.Status}): {ti.YaraMatchCount} eşleşme");
+                        foreach (var m in ti.YaraScan.Matches)
+                            sb.AppendLine($"   - [{m.Severity}] {m.Rule} -> {m.FileName} ({m.Description})");
+                    }
+
+                    if (ti.ArchiveVt != null)
+                    {
+                        var vtInfo = ti.ArchiveVt.Status == "OK"
+                            ? $"Zararlı={ti.ArchiveVt.Malicious}, Şüpheli={ti.ArchiveVt.Suspicious}"
+                            : (ti.ArchiveVt.Reason ?? ti.ArchiveVt.Status);
+                        sb.AppendLine($"• VirusTotal Durumu: {vtInfo}");
+                    }
+                    sb.AppendLine();
+                }
+
+                if (SelectedReport.FileTypes.Count > 0)
+                    sb.AppendLine("• Dosya Türleri: " + string.Join(", ", SelectedReport.FileTypes.Select(kv => $"{kv.Key} ({kv.Value})")));
+
+                if (SelectedReport.SuspiciousPaths.Count > 0)
+                    sb.AppendLine("• Şüpheli Yollar (Zip Slip):\n  - " + string.Join("\n  - ", SelectedReport.SuspiciousPaths));
+
+                if (SelectedReport.DoubleExtensionFiles.Count > 0)
+                    sb.AppendLine("• Çift Uzantılı Dosyalar:\n  - " + string.Join("\n  - ", SelectedReport.DoubleExtensionFiles));
+
+                if (SelectedReport.DisguisedFiles.Count > 0)
+                    sb.AppendLine("• Uzantısı Gizlenmiş Dosyalar:\n  - " + string.Join("\n  - ", SelectedReport.DisguisedFiles));
+
+                if (SelectedReport.HighRatioFiles.Count > 0)
+                    sb.AppendLine("• Yüksek Sıkıştırma Oranlı Dosyalar:\n  - " + string.Join("\n  - ", SelectedReport.HighRatioFiles));
+
+                if (SelectedReport.OverlappingEntries.Count > 0)
+                    sb.AppendLine("• Çakışan Kayıtlar (Overlap Bomb):\n  - " + string.Join("\n  - ", SelectedReport.OverlappingEntries));
+
+                if (SelectedReport.EncryptedFiles.Count > 0)
+                    sb.AppendLine("• Şifreli Dosyalar:\n  - " + string.Join("\n  - ", SelectedReport.EncryptedFiles));
+
+                if (SelectedReport.SymlinkFiles.Count > 0)
+                    sb.AppendLine("• Sembolik Bağlantılar:\n  - " + string.Join("\n  - ", SelectedReport.SymlinkFiles));
+
+                if (SelectedReport.NestedArchives.Count > 0)
+                    sb.AppendLine("• İç İçe Arşivler:\n  - " + string.Join("\n  - ", SelectedReport.NestedArchives));
+
+                if (SelectedReport.FileHashes.Count > 0)
+                {
+                    sb.AppendLine("• İçerik SHA-256 Özetleri:");
+                    foreach (var fh in SelectedReport.FileHashes)
+                        sb.AppendLine($"  - {fh.Name} ({FormatBytes(fh.Size)}): {fh.Sha256}");
+                }
+
+                return sb.Length > 0 ? sb.ToString().TrimEnd() : "Ek teknik bulgu tespit edilmedi.";
+            }
+        }
+
+        private void SelectEngine()
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "Analiz Motorunu Seçin (main.py veya zipanalyzer.exe)",
+                Filter = "Motor Dosyaları (main.py;*.exe)|main.py;*.exe|Python Betiği (*.py)|*.py|Çalıştırılabilir Dosya (*.exe)|*.exe|Tüm Dosyalar (*.*)|*.*"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                _analyzerService.SetCustomEnginePath(dialog.FileName);
                 OnPropertyChanged(nameof(ActiveEngineText));
-                CommandManager.InvalidateRequerySuggested();
-                StatusMessage = $"Motor başarıyla ayarlandı ve kaydedildi: {_analyzerService.ActiveEngineDisplay}";
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowError("Motor Seçim Hatası", ex.Message);
+                SaveCurrentSettings();
+                StatusMessage = $"Motor güncellendi: {ActiveEngineText}";
             }
         }
 
-        public async Task HandleDroppedPathsAsync(string[]? droppedPaths)
+        private async void SelectFiles()
         {
-            if (!_analyzerService.IsConfigured)
+            var dialog = new OpenFileDialog
             {
-                StatusMessage = "Önce '⚙ Motor Seç' butonundan analiz motorunu seçmelisiniz.";
-                return;
-            }
+                Title = "Analiz Edilecek Arşiv Dosyalarını Seçin",
+                Filter = "Desteklenen Arşivler (*.zip;*.7z;*.rar;*.tar;*.gz;*.tgz)|*.zip;*.7z;*.rar;*.tar;*.gz;*.tgz|Tüm Dosyalar (*.*)|*.*",
+                Multiselect = true
+            };
 
-            if (IsBusy)
+            if (dialog.ShowDialog() == true && dialog.FileNames.Length > 0)
             {
-                StatusMessage = "Devam eden bir analiz var. Lütfen bitmesini bekleyin veya iptal edin.";
-                return;
-            }
-
-            if (droppedPaths == null || droppedPaths.Length == 0)
-                return;
-
-            var validTargets = new List<string>();
-            var skippedFiles = new List<string>();
-
-            foreach (var path in droppedPaths)
-            {
-                if (Directory.Exists(path))
-                {
-                    validTargets.Add(path);
-                }
-                else if (File.Exists(path))
-                {
-                    if (SupportedExtensions.Contains(Path.GetExtension(path)))
-                        validTargets.Add(path);
-                    else
-                        skippedFiles.Add(Path.GetFileName(path));
-                }
-            }
-
-            if (validTargets.Count == 0)
-            {
-                StatusMessage = "Desteklenen arşiv dosyası (.zip, .7z, .rar, .tar, .gz) veya klasör bulunamadı.";
-                return;
-            }
-
-            await AnalyzeTargetsAsync(validTargets);
-
-            if (skippedFiles.Count > 0)
-            {
-                StatusMessage += $" ({skippedFiles.Count} desteklenmeyen dosya atlandı)";
+                await RunAnalysisAsync(dialog.FileNames, recursive: false);
             }
         }
 
-        private async Task SelectAndAnalyzeFilesAsync()
+        private async void SelectFolder()
         {
-            var files = _dialogService.OpenArchiveFiles();
-            if (files is { Length: > 0 })
+            var dialog = new OpenFolderDialog
             {
-                await AnalyzeTargetsAsync(files);
+                Title = "Taranacak Klasörü Seçin"
+            };
+
+            if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.FolderName))
+            {
+                await RunAnalysisAsync(new[] { dialog.FolderName }, recursive: true);
             }
         }
 
-        private async Task SelectAndAnalyzeFolderAsync()
+        public async Task HandleDroppedPathsAsync(string[] droppedPaths)
         {
-            var folder = _dialogService.OpenFolder();
-            if (!string.IsNullOrWhiteSpace(folder))
+            if (IsBusy || droppedPaths == null || droppedPaths.Length == 0)
+                return;
+
+            bool hasDirectory = droppedPaths.Any(Directory.Exists);
+            await RunAnalysisAsync(droppedPaths, recursive: hasDirectory);
+        }
+
+        private void CancelAnalysis()
+        {
+            if (_cts != null && !_cts.IsCancellationRequested)
             {
-                await AnalyzeTargetsAsync(new[] { folder });
+                StatusMessage = "Analiz iptal ediliyor...";
+                _cts.Cancel();
             }
         }
 
-        public async Task AnalyzeTargetsAsync(IReadOnlyList<string> targets)
+        private async Task RunAnalysisAsync(IEnumerable<string> targetPaths, bool recursive)
         {
-            if (IsBusy || !_analyzerService.IsConfigured || targets.Count == 0) return;
+            if (!_analyzerService.IsEngineAvailable)
+            {
+                MessageBox.Show(
+                    "Analiz motoru (main.py veya zipanalyzer.exe) bulunamadı.\nLütfen üst çubuktan '⚙ Motor Seç' butonuna tıklayarak motor konumunu seçin.",
+                    "Motor Bulunamadı", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             IsBusy = true;
-            _activeCts = new CancellationTokenSource();
-            var token = _activeCts.Token;
-
-            Reports.Clear();
-            SelectedReport = null;
+            _cts = new CancellationTokenSource();
+            StatusMessage = "Analiz motoru çalışıyor, lütfen bekleyin...";
 
             try
             {
-                for (int i = 0; i < targets.Count; i++)
+                var results = await _analyzerService.AnalyzeAsync(
+                    targetPaths,
+                    recursive,
+                    SafeMode,
+                    VtApiKey,
+                    _cts.Token);
+
+                foreach (var report in results)
                 {
-                    token.ThrowIfCancellationRequested();
+                    var existing = Reports.FirstOrDefault(r =>
+                        string.Equals(r.FileName, report.FileName, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null)
+                        Reports.Remove(existing);
 
-                    string currentTarget = targets[i];
-                    string displayName = Path.GetFileName(currentTarget.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                    StatusMessage = targets.Count > 1
-                        ? $"Analiz ediliyor ({i + 1}/{targets.Count}): {displayName}..."
-                        : $"Analiz ediliyor: {displayName}...";
-
-                    var batchResults = await _analyzerService.AnalyzeAsync(currentTarget, VtApiKey, SafeMode, token);
-
-                    foreach (ArchiveReport report in batchResults)
-                    {
-                        Reports.Add(report);
-                        SelectedReport ??= report;
-                    }
+                    Reports.Add(report);
                 }
 
-                StatusMessage = $"Analiz tamamlandı. Toplam {Reports.Count} arşiv incelendi.";
+                if (Reports.Count > 0 && SelectedReport == null)
+                    SelectedReport = Reports[0];
+
+                int highRiskCount = Reports.Count(r => r.RiskLevel == "HIGH");
+                StatusMessage = $"Analiz tamamlandı. Toplam {Reports.Count} arşiv listeleniyor ({highRiskCount} yüksek riskli).";
             }
             catch (OperationCanceledException)
             {
-                StatusMessage = $"Analiz kullanıcı tarafından iptal edildi. ({Reports.Count} arşiv tamamlanmıştı)";
+                StatusMessage = "Analiz kullanıcı tarafından iptal edildi.";
             }
             catch (Exception ex)
             {
                 StatusMessage = "Analiz sırasında hata oluştu.";
-                _dialogService.ShowError("Analiz Hatası", ex.Message);
+                MessageBox.Show(ex.Message, "Analiz Hatası", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
-                _activeCts?.Dispose();
-                _activeCts = null;
+                _cts?.Dispose();
+                _cts = null;
                 IsBusy = false;
-            }
-        }
-
-        public void CancelAnalysis()
-        {
-            if (IsBusy && _activeCts is { IsCancellationRequested: false })
-            {
-                StatusMessage = "Analiz iptal ediliyor...";
-                _activeCts.Cancel();
             }
         }
 
@@ -308,113 +344,91 @@ namespace GuvenliArsivGUI.ViewModels
         {
             Reports.Clear();
             SelectedReport = null;
-            StatusMessage = "Sonuç listesi temizlendi.";
+            StatusMessage = "Liste temizlendi.";
+            RefreshCommands();
         }
 
-        private async Task ExportReportsAsync(bool isJson)
+        private void ExportJson()
         {
-            if (Reports.Count == 0) return;
-
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string defaultName = $"GuvenliArsiv_Rapor_{timestamp}.{(isJson ? "json" : "csv")}";
-            string filter = isJson ? "JSON Raporu (*.json)|*.json" : "CSV Tablosu (*.csv)|*.csv";
-
-            string? path = _dialogService.SaveReportFile(defaultName, filter);
-            if (string.IsNullOrWhiteSpace(path)) return;
-
-            try
+            var dialog = new SaveFileDialog
             {
-                if (isJson)
-                    await _exportService.ExportToJsonAsync(path, Reports);
-                else
-                    await _exportService.ExportToCsvAsync(path, Reports);
+                Title = "Raporu JSON Olarak Kaydet",
+                Filter = "JSON Dosyası (*.json)|*.json",
+                FileName = $"arsiv_analiz_raporu_{DateTime.Now:yyyyMMdd_HHmm}.json"
+            };
 
-                StatusMessage = $"Rapor kaydedildi: {Path.GetFileName(path)}";
-            }
-            catch (Exception ex)
+            if (dialog.ShowDialog() == true)
             {
-                _dialogService.ShowError("Dışa Aktarma Hatası", $"Dosya kaydedilemedi:\n{ex.Message}");
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+                };
+                string json = JsonSerializer.Serialize(Reports, options);
+                File.WriteAllText(dialog.FileName, json, Encoding.UTF8);
+                StatusMessage = $"JSON raporu kaydedildi: {Path.GetFileName(dialog.FileName)}";
             }
         }
 
-        private static string BuildTechnicalFindings(ArchiveReport r)
+        private void ExportCsv()
         {
-            var sb = new StringBuilder();
-
-            if (!string.IsNullOrWhiteSpace(r.Error))
+            var dialog = new SaveFileDialog
             {
-                sb.AppendLine("[Motor Hata Mesajı]");
-                sb.AppendLine($"  {r.Error}");
-                sb.AppendLine();
-            }
+                Title = "Raporu CSV Olarak Kaydet",
+                Filter = "CSV Dosyası (*.csv)|*.csv",
+                FileName = $"arsiv_analiz_raporu_{DateTime.Now:yyyyMMdd_HHmm}.csv"
+            };
 
-            if (r.ThreatIntel != null)
+            if (dialog.ShowDialog() == true)
             {
-                sb.AppendLine("[Tehdit İstihbaratı & Bütünlük]");
-                if (!string.IsNullOrWhiteSpace(r.ThreatIntel.ArchiveSha256))
-                    sb.AppendLine($"  Arşiv SHA-256 : {r.ThreatIntel.ArchiveSha256}");
+                var sb = new StringBuilder();
+                sb.AppendLine("ArsivAdi;Durum;RiskSeviyesi;RiskSkoru;AnalizSuresiMs;DosyaSayisi;SikistirilmisBoyut;AcilmisBoyut;SikistirmaOrani;Uyarilar");
 
-                if (!string.IsNullOrWhiteSpace(r.ThreatIntel.YaraStatus))
-                    sb.AppendLine($"  YARA Durumu   : {r.ThreatIntel.YaraStatus} (Eşleşme: {r.ThreatIntel.YaraMatches.Count})");
-
-                if (r.ThreatIntel.VirusTotal is { } vt)
+                foreach (var r in Reports)
                 {
-                    sb.AppendLine($"  VirusTotal    : {vt.Status ?? "Bilinmiyor"} (Zararlı: {vt.Malicious}, Şüpheli: {vt.Suspicious}, Temiz: {vt.Harmless})");
-                    if (!string.IsNullOrWhiteSpace(vt.Message))
-                        sb.AppendLine($"  VT Notu       : {vt.Message}");
+                    string warningsJoined = string.Join(" | ", r.Warnings).Replace(";", ",");
+                    string fileNameClean = r.FileName.Replace(";", ",");
+                    sb.AppendLine($"{fileNameClean};{r.Status};{r.RiskLevelTr};{r.RiskScore};{r.AnalysisTimeMs:F1};{r.TotalFiles};{r.CompressedSize};{r.UncompressedSize};{r.CompressionRatioDisplay};{warningsJoined}");
                 }
-                sb.AppendLine();
+
+                File.WriteAllText(dialog.FileName, sb.ToString(), new UTF8Encoding(true));
+                StatusMessage = $"CSV raporu kaydedildi: {Path.GetFileName(dialog.FileName)}";
             }
-
-            AppendCategory(sb, "Yüksek Sıkıştırma Oranlı Dosyalar (Zip Bomb)", r.HighRatioFiles);
-            AppendCategory(sb, "Çakışan Arşiv Kayıtları (Overlap Bomb)", r.OverlappingEntries);
-            AppendCategory(sb, "Maskelenmiş / Sahte Uzantılı Dosyalar", r.DisguisedFiles);
-            AppendCategory(sb, "Şüpheli Dosya Yolları (Path Traversal)", r.SuspiciousPaths);
-            AppendCategory(sb, "Çift Uzantılı Dosyalar", r.DoubleExtensionFiles);
-            AppendCategory(sb, "Şüpheli Uzantılı Dosyalar", r.SuspiciousFiles);
-            AppendCategory(sb, "Sembolik Bağlantılar (Symlink)", r.SymlinkFiles);
-            AppendCategory(sb, "Şifreli Dosyalar", r.EncryptedFiles);
-            AppendCategory(sb, "İç İçe Arşivler", r.NestedArchives);
-
-            if (r.NestedArchiveReports.Count > 0)
-            {
-                sb.AppendLine("[İç İçe Arşiv Alt Raporları]");
-                foreach (var nested in r.NestedArchiveReports)
-                {
-                    sb.AppendLine($"  • {nested.FileName} -> Risk: {nested.RiskLevelTr} (Skor: {nested.RiskScore}, Dosya: {nested.TotalFiles})");
-                }
-                sb.AppendLine();
-            }
-
-            if (r.FileHashes.Count > 0)
-            {
-                sb.AppendLine("[Dosya SHA-256 Özetleri]");
-                foreach (var kv in r.FileHashes)
-                {
-                    sb.AppendLine($"  • {kv.Key}: {kv.Value}");
-                }
-                sb.AppendLine();
-            }
-
-            return sb.Length > 0 ? sb.ToString().Trim() : "Ek teknik bulgu kaydı yok.";
         }
 
-        private static void AppendCategory(StringBuilder sb, string title, List<string> items)
+        private void SaveCurrentSettings()
         {
-            if (items == null || items.Count == 0) return;
-            sb.AppendLine($"[{title}]");
-            foreach (var item in items)
+            _settingsService.Save(new AppSettings
             {
-                sb.AppendLine($"  - {item}");
-            }
-            sb.AppendLine();
+                CustomEnginePath = _analyzerService.CustomEnginePath,
+                SafeMode = _safeMode,
+                VtApiKey = _vtApiKey
+            });
+        }
+
+        private void RefreshCommands()
+        {
+            SelectFilesCommand.RaiseCanExecuteChanged();
+            SelectFolderCommand.RaiseCanExecuteChanged();
+            SelectEngineCommand.RaiseCanExecuteChanged();
+            CancelAnalysisCommand.RaiseCanExecuteChanged();
+            ExportJsonCommand.RaiseCanExecuteChanged();
+            ExportCsvCommand.RaiseCanExecuteChanged();
+            ClearReportsCommand.RaiseCanExecuteChanged();
         }
 
         private static string FormatBytes(long bytes)
         {
-            if (bytes < 1024) return $"{bytes} B";
-            if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-            return $"{bytes / (1024.0 * 1024.0):F2} MB";
+            if (bytes <= 0) return "0 B";
+            string[] units = { "B", "KB", "MB", "GB", "TB" };
+            int order = 0;
+            double len = bytes;
+            while (len >= 1024 && order < units.Length - 1)
+            {
+                order++;
+                len /= 1024;
+            }
+            return $"{len:0.##} {units[order]}";
         }
     }
 }

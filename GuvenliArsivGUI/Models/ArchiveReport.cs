@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace GuvenliArsivGUI.Models
@@ -10,9 +8,6 @@ namespace GuvenliArsivGUI.Models
     {
         [JsonPropertyName("file_name")]
         public string FileName { get; set; } = string.Empty;
-
-        [JsonPropertyName("file_path")]
-        public string? FilePath { get; set; }
 
         [JsonPropertyName("status")]
         public string Status { get; set; } = string.Empty;
@@ -36,7 +31,7 @@ namespace GuvenliArsivGUI.Models
         public long UncompressedSize { get; set; }
 
         [JsonPropertyName("compression_ratio")]
-        public double? CompressionRatio { get; set; }
+        public double CompressionRatio { get; set; }
 
         [JsonPropertyName("file_types")]
         public Dictionary<string, int> FileTypes { get; set; } = new();
@@ -63,22 +58,16 @@ namespace GuvenliArsivGUI.Models
         public List<string> DoubleExtensionFiles { get; set; } = new();
 
         [JsonPropertyName("high_ratio_files")]
-        [JsonConverter(typeof(FlexibleStringListConverter))]
         public List<string> HighRatioFiles { get; set; } = new();
 
         [JsonPropertyName("overlapping_entries")]
-        [JsonConverter(typeof(FlexibleStringListConverter))]
         public List<string> OverlappingEntries { get; set; } = new();
 
         [JsonPropertyName("disguised_files")]
-        [JsonConverter(typeof(FlexibleStringListConverter))]
         public List<string> DisguisedFiles { get; set; } = new();
 
         [JsonPropertyName("file_hashes")]
-        public Dictionary<string, string> FileHashes { get; set; } = new();
-
-        [JsonPropertyName("threat_intel")]
-        public ThreatIntelReport? ThreatIntel { get; set; }
+        public List<FileHashInfo> FileHashes { get; set; } = new();
 
         [JsonPropertyName("warnings")]
         public List<string> Warnings { get; set; } = new();
@@ -86,45 +75,65 @@ namespace GuvenliArsivGUI.Models
         [JsonPropertyName("error")]
         public string? Error { get; set; }
 
-        // --- UI Yardımcı Özellikleri ---
+        [JsonPropertyName("threat_intel")]
+        public ThreatIntelInfo? ThreatIntel { get; set; }
 
         [JsonIgnore]
-        public string RiskLevelTr => RiskLevel?.ToUpperInvariant() switch
+        public string RiskLevelTr => RiskLevel switch
         {
             "HIGH" => "YÜKSEK",
             "MEDIUM" => "ORTA",
             "LOW" => "DÜŞÜK",
-            "ERROR" => "HATA",
             _ => "BİLİNMİYOR"
         };
 
         [JsonIgnore]
         public string CompressionRatioDisplay =>
-            !CompressionRatio.HasValue || double.IsInfinity(CompressionRatio.Value) || double.IsNaN(CompressionRatio.Value)
-                ? "∞"
-                : $"{CompressionRatio.Value:F2}x";
+            double.IsInfinity(CompressionRatio) ? "∞" :
+            double.IsNaN(CompressionRatio) ? "-" :
+            $"{CompressionRatio:F2}x";
     }
 
-    public class ThreatIntelReport
+    public class FileHashInfo
     {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("size")]
+        public long Size { get; set; }
+
+        [JsonPropertyName("sha256")]
+        public string Sha256 { get; set; } = string.Empty;
+    }
+
+    public class ThreatIntelInfo
+    {
+        [JsonPropertyName("safe_mode")]
+        public bool SafeMode { get; set; }
+
         [JsonPropertyName("archive_sha256")]
         public string? ArchiveSha256 { get; set; }
 
-        [JsonPropertyName("yara_status")]
-        public string? YaraStatus { get; set; }
+        [JsonPropertyName("archive_vt")]
+        public VirusTotalResult? ArchiveVt { get; set; }
 
-        [JsonPropertyName("yara_matches")]
-        [JsonConverter(typeof(FlexibleStringListConverter))]
-        public List<string> YaraMatches { get; set; } = new();
+        [JsonPropertyName("yara_scan")]
+        public YaraScanResult? YaraScan { get; set; }
 
-        [JsonPropertyName("virustotal")]
-        public VirusTotalReport? VirusTotal { get; set; }
+        [JsonPropertyName("vt_malicious_count")]
+        public int VtMaliciousCount { get; set; }
+
+        [JsonPropertyName("yara_match_count")]
+        public int YaraMatchCount { get; set; }
     }
 
-    public class VirusTotalReport
+    public class VirusTotalResult
     {
         [JsonPropertyName("status")]
-        public string? Status { get; set; }
+        public string Status { get; set; } = string.Empty;
+
+        [JsonPropertyName("reason")]
+        public string? Reason { get; set; }
 
         [JsonPropertyName("malicious")]
         public int Malicious { get; set; }
@@ -140,51 +149,29 @@ namespace GuvenliArsivGUI.Models
 
         [JsonPropertyName("permalink")]
         public string? Permalink { get; set; }
-
-        [JsonPropertyName("message")]
-        public string? Message { get; set; }
     }
 
-    /// <summary>
-    /// JSON dizisindeki öğeler string veya nesne (dict) gelse de okunabilir metne dönüştürür.
-    /// </summary>
-    public class FlexibleStringListConverter : JsonConverter<List<string>>
+    public class YaraScanResult
     {
-        public override List<string> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            var list = new List<string>();
-            if (reader.TokenType != JsonTokenType.StartArray)
-            {
-                reader.Skip();
-                return list;
-            }
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = string.Empty;
 
-            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
-            {
-                if (reader.TokenType == JsonTokenType.String)
-                {
-                    var val = reader.GetString();
-                    if (!string.IsNullOrWhiteSpace(val)) list.Add(val);
-                }
-                else if (reader.TokenType == JsonTokenType.StartObject)
-                {
-                    using var doc = JsonDocument.ParseValue(ref reader);
-                    var props = doc.RootElement.EnumerateObject()
-                        .Select(p => $"{p.Name}: {p.Value}")
-                        .ToList();
-                    list.Add(string.Join(" | ", props));
-                }
-                else
-                {
-                    reader.Skip();
-                }
-            }
-            return list;
-        }
+        [JsonPropertyName("matches")]
+        public List<YaraMatchInfo> Matches { get; set; } = new();
+    }
 
-        public override void Write(Utf8JsonWriter writer, List<string> value, JsonSerializerOptions options)
-        {
-            JsonSerializer.Serialize(writer, value, options);
-        }
+    public class YaraMatchInfo
+    {
+        [JsonPropertyName("file_name")]
+        public string FileName { get; set; } = string.Empty;
+
+        [JsonPropertyName("rule")]
+        public string Rule { get; set; } = string.Empty;
+
+        [JsonPropertyName("severity")]
+        public string Severity { get; set; } = string.Empty;
+
+        [JsonPropertyName("description")]
+        public string Description { get; set; } = string.Empty;
     }
 }

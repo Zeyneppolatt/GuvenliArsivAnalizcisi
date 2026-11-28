@@ -8,6 +8,7 @@ namespace GuvenliArsivGUI.Services
     {
         public string? CustomEnginePath { get; set; }
         public bool SafeMode { get; set; } = true;
+        public string? VtApiKey { get; set; }
     }
 
     public class AppSettingsService
@@ -17,9 +18,9 @@ namespace GuvenliArsivGUI.Services
         public AppSettingsService()
         {
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string folder = Path.Combine(appData, "GuvenliArsivGUI");
-            Directory.CreateDirectory(folder);
-            _settingsFilePath = Path.Combine(folder, "settings.json");
+            string appDir = Path.Combine(appData, "GuvenliArsivAnalizcisi");
+            Directory.CreateDirectory(appDir);
+            _settingsFilePath = Path.Combine(appDir, "settings.json");
         }
 
         public AppSettings Load()
@@ -34,7 +35,7 @@ namespace GuvenliArsivGUI.Services
             }
             catch
             {
-                // Bozuk ayar dosyası durumunda varsayılan ayarlara dön
+                // Bozuk ayar dosyasında varsayılanlarla devam et
             }
             return new AppSettings();
         }
@@ -48,7 +49,7 @@ namespace GuvenliArsivGUI.Services
             }
             catch
             {
-                // Yazma izni yoksa uygulamayı çökertme
+                // Yazma izni yoksa sessizce geç
             }
         }
     }

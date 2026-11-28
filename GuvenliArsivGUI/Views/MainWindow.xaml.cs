@@ -1,6 +1,4 @@
-﻿using System.ComponentModel;
-using System.Windows;
-using GuvenliArsivGUI.Services;
+﻿using System.Windows;
 using GuvenliArsivGUI.ViewModels;
 
 namespace GuvenliArsivGUI.Views
@@ -12,24 +10,13 @@ namespace GuvenliArsivGUI.Views
         public MainWindow()
         {
             InitializeComponent();
-
-            var settingsService = new AppSettingsService();
-            var settings = settingsService.Load();
-            var analyzerService = new ZipAnalyzerService(settings.CustomEnginePath);
-
-            _viewModel = new MainViewModel(
-                analyzerService,
-                new WpfDialogService(),
-                new ReportExportService(),
-                settingsService,
-                settings);
-
+            _viewModel = new MainViewModel();
             DataContext = _viewModel;
         }
 
         private void Window_DragOver(object sender, DragEventArgs e)
         {
-            e.Effects = !_viewModel.IsBusy && e.Data.GetDataPresent(DataFormats.FileDrop)
+            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
                 ? DragDropEffects.Copy
                 : DragDropEffects.None;
             e.Handled = true;
@@ -37,17 +24,11 @@ namespace GuvenliArsivGUI.Views
 
         private async void Window_Drop(object sender, DragEventArgs e)
         {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
+                e.Data.GetData(DataFormats.FileDrop) is string[] droppedPaths)
             {
-                var droppedPaths = e.Data.GetData(DataFormats.FileDrop) as string[];
                 await _viewModel.HandleDroppedPathsAsync(droppedPaths);
             }
-        }
-
-        protected override void OnClosing(CancelEventArgs e)
-        {
-            _viewModel.CancelAnalysis();
-            base.OnClosing(e);
         }
     }
 }

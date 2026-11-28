@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,95 +14,119 @@ namespace GuvenliArsivGUI.Services
 {
     public class ZipAnalyzerService
     {
-        private static readonly JsonSerializerOptions JsonOptions = new()
+        private string? _resolvedEnginePath;
+        private bool _isPackagedExe;
+
+        public string? CustomEnginePath { get; private set; }
+        public bool IsEngineAvailable => !string.IsNullOrWhiteSpace(_resolvedEnginePath) && File.Exists(_resolvedEnginePath);
+
+        public string ActiveEngineDescription
         {
-            PropertyNameCaseInsensitive = true,
-            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
-        };
-
-        private string? _executablePath;
-        private string? _scriptPath;
-        private string? _workingDirectory;
-
-        public bool IsConfigured => !string.IsNullOrWhiteSpace(_executablePath) && !string.IsNullOrWhiteSpace(_workingDirectory);
-
-        public string ActiveEngineDisplay { get; private set; } = "Motor seçilmedi";
-
-        public ZipAnalyzerService(string? savedEnginePath = null)
-        {
-            // 1. Öncelik: Kullanıcının daha önce seçip kaydettiği yol
-            if (!string.IsNullOrWhiteSpace(savedEnginePath) && File.Exists(savedEnginePath))
+            get
             {
-                ConfigureEngine(savedEnginePath);
+                if (!IsEngineAvailable) return "Motor bulunamadı";
+                string fileName = Path.GetFileName(_resolvedEnginePath!);
+                return _isPackagedExe ? $"Paket Motor ({fileName})" : $"Python ({fileName})";
+            }
+        }
+
+        public ZipAnalyzerService(string? customEnginePath = null)
+        {
+            SetCustomEnginePath(customEnginePath);
+        }
+
+        public void SetCustomEnginePath(string? customPath)
+        {
+            CustomEnginePath = string.IsNullOrWhiteSpace(customPath) ? null : customPath;
+            ResolveEngine();
+        }
+
+        private void ResolveEngine()
+        {
+            _resolvedEnginePath = null;
+            _isPackagedExe = false;
+
+            if (!string.IsNullOrWhiteSpace(CustomEnginePath) && File.Exists(CustomEnginePath))
+            {
+                _resolvedEnginePath = Path.GetFullPath(CustomEnginePath);
+                _isPackagedExe = _resolvedEnginePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
                 return;
             }
 
             string baseDir = AppContext.BaseDirectory;
-
-            // 2. Öncelik: Paketlenmiş bağımsız motor (engine/zipanalyzer.exe)
             string bundledExe = Path.Combine(baseDir, "engine", "zipanalyzer.exe");
             if (File.Exists(bundledExe))
             {
-                ConfigureEngine(bundledExe);
+                _resolvedEnginePath = bundledExe;
+                _isPackagedExe = true;
                 return;
             }
 
-            // 3. Öncelik: Geliştirme ortamında yukarı klasörlerde main.py arama
-            string? repoRoot = FindRepoRoot(baseDir);
-            if (repoRoot != null)
+            var dir = new DirectoryInfo(baseDir);
+            while (dir != null)
             {
-                ConfigureEngine(Path.Combine(repoRoot, "main.py"));
+                string candidateMain = Path.Combine(dir.FullName, "main.py");
+                if (File.Exists(candidateMain))
+                {
+                    _resolvedEnginePath = candidateMain;
+                    _isPackagedExe = false;
+                    return;
+                }
+                dir = dir.Parent;
             }
         }
 
-        public void ConfigureEngine(string selectedPath)
+        private string ResolvePythonInterpreter(string scriptDirectory)
         {
-            if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+            var dir = new DirectoryInfo(scriptDirectory);
+            while (dir != null)
             {
-                throw new FileNotFoundException("Seçilen motor dosyası bulunamadı.", selectedPath);
-            }
+                string venvPython = Path.Combine(dir.FullName, ".venv", "Scripts", "python.exe");
+                if (File.Exists(venvPython))
+                    return venvPython;
 
-            string fullPath = Path.GetFullPath(selectedPath);
-            string directory = Path.GetDirectoryName(fullPath)!;
+                string venvPythonAlt = Path.Combine(dir.FullName, "venv", "Scripts", "python.exe");
+                if (File.Exists(venvPythonAlt))
+                    return venvPythonAlt;
 
-            if (fullPath.EndsWith(".py", StringComparison.OrdinalIgnoreCase))
-            {
-                _workingDirectory = directory;
-                _scriptPath = fullPath;
-
-                string venvPython = Path.Combine(directory, ".venv", "Scripts", "python.exe");
-                _executablePath = File.Exists(venvPython) ? venvPython : "python";
-                ActiveEngineDisplay = $"Python ({Path.GetFileName(fullPath)})";
+                dir = dir.Parent;
             }
-            else
-            {
-                _workingDirectory = directory;
-                _scriptPath = null;
-                _executablePath = fullPath;
-                ActiveEngineDisplay = Path.GetFileName(fullPath);
-            }
+            return "python";
         }
 
         public async Task<List<ArchiveReport>> AnalyzeAsync(
-            string targetPath,
-            string? vtApiKey = null,
-            bool safeMode = true,
+            IEnumerable<string> targetPaths,
+            bool recursive,
+            bool safeMode,
+            string? vtApiKey,
             CancellationToken cancellationToken = default)
         {
-            if (!IsConfigured || _executablePath == null || _workingDirectory == null)
+            if (!IsEngineAvailable)
+                throw new FileNotFoundException("Analiz motoru (main.py veya zipanalyzer.exe) bulunamadı.");
+
+            var validPaths = targetPaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+            var allReports = new List<ArchiveReport>();
+
+            foreach (var path in validPaths)
             {
-                throw new InvalidOperationException("Analiz motoru yapılandırılmamış. Lütfen 'Motor Seç' butonundan main.py veya zipanalyzer.exe dosyasını seçin.");
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = await AnalyzeSingleTargetAsync(path, safeMode, vtApiKey, cancellationToken);
+                allReports.AddRange(batch);
             }
 
-            if (string.IsNullOrWhiteSpace(targetPath) || (!File.Exists(targetPath) && !Directory.Exists(targetPath)))
-            {
-                throw new FileNotFoundException("Analiz edilecek hedef dosya veya klasör bulunamadı.", targetPath);
-            }
+            return allReports;
+        }
 
+        private async Task<List<ArchiveReport>> AnalyzeSingleTargetAsync(
+            string targetPath,
+            bool safeMode,
+            string? vtApiKey,
+            CancellationToken cancellationToken)
+        {
+            string engineDir = Path.GetDirectoryName(_resolvedEnginePath!)!;
             var psi = new ProcessStartInfo
             {
-                FileName = _executablePath,
-                WorkingDirectory = _workingDirectory,
+                WorkingDirectory = engineDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -110,94 +135,79 @@ namespace GuvenliArsivGUI.Services
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            if (_scriptPath != null)
+            if (_isPackagedExe)
             {
-                psi.ArgumentList.Add(_scriptPath);
+                psi.FileName = _resolvedEnginePath!;
             }
+            else
+            {
+                psi.FileName = ResolvePythonInterpreter(engineDir);
+                psi.ArgumentList.Add(_resolvedEnginePath!);
+            }
+
+            // Python çıktısının Windows'ta CP1254 yerine kesinlikle UTF-8 olmasını sağla
+            psi.Environment["PYTHONIOENCODING"] = "utf-8";
+            psi.Environment["PYTHONUTF8"] = "1";
+
+            // main.py CLI argümanları: [--unsafe-mode] path
+            if (!safeMode)
+                psi.ArgumentList.Add("--unsafe-mode");
+
+            if (!string.IsNullOrWhiteSpace(vtApiKey))
+                psi.Environment["VT_API_KEY"] = vtApiKey.Trim();
 
             psi.ArgumentList.Add(targetPath);
 
-            if (!safeMode)
-            {
-                psi.ArgumentList.Add("--unsafe-mode");
-            }
-
-            psi.Environment["PYTHONUTF8"] = "1";
-            if (!string.IsNullOrWhiteSpace(vtApiKey))
-            {
-                psi.Environment["VT_API_KEY"] = vtApiKey.Trim();
-            }
-
             using var process = new Process { StartInfo = psi };
+            process.Start();
 
-            if (!process.Start())
-            {
-                throw new InvalidOperationException("Analiz motoru süreci başlatılamadı.");
-            }
-
-            await using var registration = cancellationToken.Register(() =>
+            using var registration = cancellationToken.Register(() =>
             {
                 try
                 {
                     if (!process.HasExited)
-                    {
                         process.Kill(entireProcessTree: true);
-                    }
                 }
-                catch
-                {
-                }
+                catch { }
             });
 
-            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            Task<string> stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            Task<string> stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
             await process.WaitForExitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            string stdout = (await stdoutTask).Trim();
-            string stderr = (await stderrTask).Trim();
+            string stdOut = await stdOutTask;
+            string stdErr = await stdErrTask;
 
-            if (string.IsNullOrWhiteSpace(stdout))
+            if (string.IsNullOrWhiteSpace(stdOut))
             {
-                throw new InvalidOperationException(
-                    $"Analiz motorundan çıktı alınamadı (Çıkış Kodu: {process.ExitCode}).\n{(string.IsNullOrWhiteSpace(stderr) ? "" : $"Hata: {stderr}")}");
+                throw new Exception($"Analiz motorundan çıktı alınamadı (Çıkış Kodu: {process.ExitCode}).\nHata: {stdErr}");
             }
 
             try
             {
-                if (stdout.StartsWith('['))
+                var options = new JsonSerializerOptions
                 {
-                    return JsonSerializer.Deserialize<List<ArchiveReport>>(stdout, JsonOptions) ?? new List<ArchiveReport>();
-                }
+                    PropertyNameCaseInsensitive = true,
+                    NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
+                };
 
-                if (stdout.StartsWith('{'))
+                string trimmed = stdOut.Trim();
+                if (trimmed.StartsWith("["))
                 {
-                    var single = JsonSerializer.Deserialize<ArchiveReport>(stdout, JsonOptions);
+                    return JsonSerializer.Deserialize<List<ArchiveReport>>(trimmed, options) ?? new List<ArchiveReport>();
+                }
+                else
+                {
+                    var single = JsonSerializer.Deserialize<ArchiveReport>(trimmed, options);
                     return single != null ? new List<ArchiveReport> { single } : new List<ArchiveReport>();
                 }
             }
-            catch (JsonException jex)
+            catch (Exception ex)
             {
-                throw new InvalidOperationException(
-                    $"Motor çıktısı JSON olarak ayrıştırılamadı: {jex.Message}\nHam Çıktı: {stdout}", jex);
+                throw new Exception($"Motor çıktısı JSON olarak ayrıştırılamadı: {ex.Message}\nHam Çıktı: {stdOut}");
             }
-
-            throw new InvalidOperationException(
-                $"Motor beklenmeyen bir çıktı üretti (Kod {process.ExitCode}):\n{stdout}\n{stderr}");
-        }
-
-        private static string? FindRepoRoot(string startDir)
-        {
-            var dir = new DirectoryInfo(startDir);
-            while (dir != null)
-            {
-                if (File.Exists(Path.Combine(dir.FullName, "main.py")))
-                {
-                    return dir.FullName;
-                }
-                dir = dir.Parent;
-            }
-            return null;
         }
     }
 }
