@@ -10,7 +10,7 @@ def test_compression_ratio():
 
 
 def test_zero_compressed_size():
-    assert calculate_compression_ratio(0, 100) == float("inf")
+    assert calculate_compression_ratio(0, 100) == 999999.0
     assert calculate_compression_ratio(0, 0) == 0.0
 
 

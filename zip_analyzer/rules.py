@@ -29,8 +29,9 @@ def calculate_compression_ratio(compressed_size, uncompressed_size):
     if compressed_size < 0 or uncompressed_size < 0:
         raise ValueError("Dosya boyutları negatif olamaz.")
 
+     
     if compressed_size == 0:
-        return float("inf") if uncompressed_size > 0 else 0
+        return 999999.0 if uncompressed_size > 0 else 0 
 
     return uncompressed_size / compressed_size
 
