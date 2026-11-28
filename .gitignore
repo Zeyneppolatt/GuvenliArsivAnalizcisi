@@ -1,36 +1,14 @@
 
-# Python sanal ortamı
-.venv/
-venv/
-
-# Python önbellekleri
-__pycache__/
-*.py[cod]
-.pytest_cache/
-
-# Ortam değişkenleri ve gizli bilgiler
-.env
-.env.*
-
-# Yerel test ve analiz dosyaları
-test.zip
-bozuk.zip
-ornek.zip
-ornek.txt
-ornekçtxt
-rapor.json
-
-# IDE ve işletim sistemi dosyaları
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-
-
+# .NET / WPF
 bin/
 obj/
 .vs/
 *.user
-*.suo
+publish/
+
+# .NET / WPF
+bin/
+obj/
+.vs/
+*.user
 publish/
